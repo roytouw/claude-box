@@ -5,30 +5,27 @@ The container only sees the project folder and its own home volume: no host `~/.
 (plugins, skills, memory), no SSH keys, no git, gh or glab config. Secrets come from your macOS
 Keychain at start-up and are never baked into an image.
 
-## Install
+## Setup with Claude (MCP)
+
+Needs [uv](https://docs.astral.sh/uv/). Clone the repo and register the MCP server yourself:
 
 ```sh
 git clone https://github.com/roytouw/claude-box ~/claude-box
-~/claude-box/bin/claude-box doctor   # checks your system and tells you what's still needed
-```
-
-`doctor` changes nothing; it prints the commands to run yourself (putting `claude-box` on your
-PATH, optionally registering the MCP server).
-
-## Set up a workspace
-
-**With Claude** (optional MCP server, needs [uv](https://docs.astral.sh/uv/)): register it once
-yourself, then just ask Claude, e.g. *"set up a claude-box for gitlab.com/acme/shop"*. Claude
-clones the repo, asks about profile, connectors, Docker and color, and walks you through the
-tokens. Secrets go from your clipboard straight into the Keychain; Claude never sees them.
-
-```sh
 claude mcp add claude-box -- uv run --script ~/claude-box/mcp/server.py
 ```
 
-**Or by hand:**
+Then ask Claude, e.g. *"set up a claude-box for gitlab.com/acme/shop"*. Claude checks your system
+first, clones the repo, asks about profile, connectors, Docker and color, and walks you through the
+tokens. Secrets go from your clipboard straight into the Keychain; Claude never sees them. Later,
+"my claude-box for shop doesn't work" makes Claude run the checks and tell you what to fix.
+
+## Manual setup
 
 ```sh
+git clone https://github.com/roytouw/claude-box ~/claude-box
+ln -s ~/claude-box/bin/claude-box ~/.local/bin/claude-box
+claude-box doctor                      # checks your system (changes nothing)
+
 claude-box init <repo-url> [name]      # clone over HTTPS, generate .claude-box/ (detects Go, pnpm)
 claude-box secret <name> GITLAB_TOKEN  # copy the token first: stores the clipboard, checks it, clears it
 claude-box set <name> docker on        # profile | connectors | docker | color | env

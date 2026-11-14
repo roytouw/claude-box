@@ -118,7 +118,8 @@ doctor_system() {
   else warn "claude-box isn't on your PATH (optional); to add it, run:"; hint "ln -s $BOX_DIR/bin/claude-box ~/.local/bin/claude-box"; fi
   if command -v uv >/dev/null; then ok "uv $(uv --version | awk '{print $2}')"
   else warn "uv not found (needed only for the MCP server)"; hint "brew install uv"; fi
-  if command -v claude >/dev/null; then
+  if [[ -n "${CLAUDE_BOX_VIA_MCP:-}" ]]; then ok "running through the claude-box MCP server"
+  elif command -v claude >/dev/null; then
     if claude mcp get claude-box >/dev/null 2>&1; then ok "claude-box MCP server registered in Claude Code"
     else
       warn "claude-box MCP server not registered (optional: lets Claude set up boxes for you)"

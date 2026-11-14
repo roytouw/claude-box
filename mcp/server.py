@@ -12,6 +12,7 @@ Register it yourself (claude-box never does this for you):
     claude mcp add claude-box -- uv run --script ~/claude-box/mcp/server.py
 """
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -28,6 +29,10 @@ claude-box runs Claude Code in a Docker container per project ("workspace"), sep
 user's host setup. Use these tools to set up and check workspaces for the user.
 
 Typical setup flow:
+0. Start with doctor (no workspace) to check the user's system. Relay anything missing with its
+   fix (e.g. start Docker Desktop). The user may never have used the claude-box CLI: if it isn't
+   on their PATH, give them the ln command doctor prints to run themselves, or use the full path
+   in the start command at the end. Don't run commands on their machine for them.
 1. create_workspace with the repo URL. If cloning fails because the repo is private, the user
    needs a token first (step 3), then call create_workspace again.
 2. Ask the user what matters, then configure_workspace: which profile (their private Claude
@@ -40,6 +45,9 @@ Typical setup flow:
 4. Run doctor on the workspace and fix what it reports, then tell the user to start the box with
    `claude-box <workspace>` (first start on a new profile asks for a Claude login in the box).
 
+When the user says a box doesn't work, run doctor on that workspace (list_workspaces if unsure
+which) and explain the problems and fixes in plain words.
+
 Token guidance: GitHub fine-grained token (only the needed repos; Contents + Pull requests
 read/write); GitLab token with read_repository + write_repository (+ api for merge requests);
 Atlassian API token created while signed in as the account used for JIRA_USERNAME.
@@ -50,7 +58,8 @@ Atlassian API token created while signed in as the account used for JIRA_USERNAM
 def run(*args: str) -> str:
     """Run the claude-box CLI and return its output (without colors) plus the exit status."""
     proc = subprocess.run(
-        [str(CLI), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900
+        [str(CLI), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900,
+        env={**os.environ, "CLAUDE_BOX_VIA_MCP": "1"},
     )
     out = ANSI.sub("", (proc.stdout + proc.stderr).strip())
     return out + ("" if proc.returncode == 0 else f"\n(exit status {proc.returncode})")
