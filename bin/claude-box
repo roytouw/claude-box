@@ -3,13 +3,17 @@
 #
 #   claude-box [options] [workspace] [-- <claude args>]
 #
+# Starts `claude agents` (agent view: your sessions, start or resume background agents).
+#
 # [workspace] is a folder name under $CLAUDE_BOX_WORKSPACES (default ~/claude-box/workspaces,
 # default name "scratch"), created if missing. If it contains .claude-box/, that configures it:
 #   .claude-box/Dockerfile   project image, FROM ghcr.io/roytouw/claude-box:base
 #   .claude-box/secrets.txt  env var names, read from Keychain items "claude-box/<workspace>/<VAR>"
 #   .claude-box/mcp.json     MCP servers for claude (use ${VAR} for secrets)
+#   .claude-box/color        terminal background while the box runs, e.g. #4A2208
 #
 # Options:
+#   --chat         start a plain new `claude` chat instead of agent view
 #   --shell        open bash in the box instead of claude
 #   --profile P    home volume to use: Claude login, git identity, gh config (default: "private")
 #   --pull         pull the latest base image first
@@ -21,13 +25,14 @@ BOX_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 BASE_IMAGE="ghcr.io/roytouw/claude-box:base"
 WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
 
-profile="private"; shell=0; pull=0; ws=""
+profile="private"; shell=0; chat=0; pull=0; ws=""
 claude_args=()
 
-usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --chat) chat=1 ;;
     --shell) shell=1 ;;
     --profile) profile="$2"; shift ;;
     --pull) pull=1 ;;
@@ -83,7 +88,7 @@ fi
 if [[ $shell -eq 1 ]]; then
   cmd=(bash)
 else
-  cmd=(claude)
+  if [[ $chat -eq 1 ]]; then cmd=(claude); else cmd=(claude agents); fi
   [[ -f "$cfg/mcp.json" ]] && cmd+=(--mcp-config /workspace/.claude-box/mcp.json)
   cmd+=("${claude_args[@]+"${claude_args[@]}"}")
 fi
@@ -110,9 +115,36 @@ if [[ -n "$open_port" ]]; then
   bridge_pid=$!
   disown "$bridge_pid"
 fi
+# --- terminal: project background color + title, restored on exit ------------------------------
+# Standard escape codes (OSC 11 / OSC 2), ignored by terminals that don't support them.
+# Kitty/xterm: push/pop the color and title stacks, so the exact previous state comes back.
+tty_out=""; color_set=0
+{ : > /dev/tty; } 2>/dev/null && tty_out=/dev/tty
+if [[ -n "$tty_out" ]]; then
+  printf '\033[22;0t' > "$tty_out"                                   # push title
+  printf '\033]2;claude-box: %s\033\\' "$ws" > "$tty_out"
+  if [[ -f "$cfg/color" ]]; then
+    color="$(head -1 "$cfg/color" | tr -d '[:space:]')"
+    if [[ "$color" =~ ^#[0-9A-Fa-f]{6}$ ]]; then
+      [[ -n "${KITTY_WINDOW_ID:-}" ]] && printf '\033[#P' > "$tty_out"   # push colors
+      printf '\033]11;%s\033\\' "$color" > "$tty_out"
+      color_set=1
+    else
+      echo "[claude-box] ignoring .claude-box/color: expected #RRGGBB, got: $color" >&2
+    fi
+  fi
+fi
+
 cleanup() {
   [[ -n "$bridge_pid" ]] && kill "$bridge_pid" 2>/dev/null
   [[ -n "$open_port" ]] && pkill -f "nc -l 127.0.0.1 $open_port" 2>/dev/null
+  if [[ -n "$tty_out" ]]; then
+    if [[ $color_set -eq 1 ]]; then
+      if [[ -n "${KITTY_WINDOW_ID:-}" ]]; then printf '\033[#Q' > "$tty_out"   # pop colors
+      else printf '\033]111\033\\' > "$tty_out"; fi                             # reset background
+    fi
+    printf '\033[23;0t' > "$tty_out"                                 # pop title
+  fi
   return 0
 }
 trap cleanup EXIT
