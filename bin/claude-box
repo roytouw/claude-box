@@ -3,6 +3,8 @@
 #
 #   claude-box [options] [workspace] [-- <claude args>]
 #
+# Starts `claude agents` (agent view: your sessions, start or resume background agents).
+#
 # [workspace] is a folder name under $CLAUDE_BOX_WORKSPACES (default ~/claude-box/workspaces,
 # default name "scratch"), created if missing. If it contains .claude-box/, that configures it:
 #   .claude-box/Dockerfile   project image, FROM ghcr.io/roytouw/claude-box:base
@@ -11,6 +13,7 @@
 #   .claude-box/color        terminal background while the box runs, e.g. #4A2208
 #
 # Options:
+#   --chat         start a plain new `claude` chat instead of agent view
 #   --shell        open bash in the box instead of claude
 #   --profile P    home volume to use: Claude login, git identity, gh config (default: "private")
 #   --pull         pull the latest base image first
@@ -22,13 +25,14 @@ BOX_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 BASE_IMAGE="ghcr.io/roytouw/claude-box:base"
 WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
 
-profile="private"; shell=0; pull=0; ws=""
+profile="private"; shell=0; chat=0; pull=0; ws=""
 claude_args=()
 
-usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --chat) chat=1 ;;
     --shell) shell=1 ;;
     --profile) profile="$2"; shift ;;
     --pull) pull=1 ;;
@@ -84,7 +88,7 @@ fi
 if [[ $shell -eq 1 ]]; then
   cmd=(bash)
 else
-  cmd=(claude)
+  if [[ $chat -eq 1 ]]; then cmd=(claude); else cmd=(claude agents); fi
   [[ -f "$cfg/mcp.json" ]] && cmd+=(--mcp-config /workspace/.claude-box/mcp.json)
   cmd+=("${claude_args[@]+"${claude_args[@]}"}")
 fi
