@@ -48,3 +48,14 @@ RUN curl -fsSL "https://go.dev/dl/go1.26.2.linux-$(dpkg --print-architecture).ta
 USER agent
 ENV PATH="/usr/local/go/bin:${PATH}"
 ```
+
+## GitHub access
+
+Give the box a fine-grained token so an agent can only touch the repos you pick:
+
+1. https://github.com/settings/personal-access-tokens/new: resource owner = your account,
+   **Only select repositories**, permissions **Contents** + **Pull requests** read/write
+   (add **Workflows** if it may edit `.github/workflows`), expiry 90 days.
+2. List `GH_TOKEN` in `.claude-box/secrets.txt` and store the token:
+   `security add-generic-password -s claude-box/<workspace>/GH_TOKEN -a "$USER" -w`
+3. Clone over HTTPS (the box has no SSH keys) and run `gh auth setup-git` once in the box.
