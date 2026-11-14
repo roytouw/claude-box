@@ -1,0 +1,14 @@
+#!/bin/bash
+# xclip / xsel stand-in: copies stdin to the Mac clipboard via the terminal (OSC 52, supported by
+# kitty, iTerm2, WezTerm, Ghostty). Reading the clipboard is not supported.
+for a in "$@"; do
+  case "$a" in -o|-out|--output) echo "clipboard read not supported in claude-box" >&2; exit 1 ;; esac
+done
+data="$(base64 | tr -d '\n')"
+# Tools like gh run this without a controlling terminal, so /dev/tty can fail; fall back to the
+# container's terminal device.
+for t in /dev/tty /dev/pts/[0-9]*; do
+  if { printf '\033]52;c;%s\a' "$data" > "$t"; } 2>/dev/null; then exit 0; fi
+done
+echo "claude-box: no terminal available for clipboard copy" >&2
+exit 1

@@ -1,0 +1,130 @@
+#!/bin/bash
+# claude-box: run Claude Code in a Docker container, separated from the host setup.
+#
+#   claude-box [options] [workspace] [-- <claude args>]
+#
+# [workspace] is a folder name under $CLAUDE_BOX_WORKSPACES (default ~/claude-box/workspaces,
+# default name "scratch"), created if missing. If it contains .claude-box/, that configures it:
+#   .claude-box/Dockerfile   project image, FROM ghcr.io/roytouw/claude-box:base
+#   .claude-box/secrets.txt  env var names, read from Keychain items "claude-box/<workspace>/<VAR>"
+#   .claude-box/mcp.json     MCP servers for claude (use ${VAR} for secrets)
+#
+# Options:
+#   --shell        open bash in the box instead of claude
+#   --profile P    home volume to use: Claude login, git identity, gh config (default: "private")
+#   --pull         pull the latest base image first
+#   --build-base   build the base image locally from this repo, then exit
+#   -h, --help
+set -euo pipefail
+
+BOX_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+BASE_IMAGE="ghcr.io/roytouw/claude-box:base"
+WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
+
+profile="private"; shell=0; pull=0; ws=""
+claude_args=()
+
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --shell) shell=1 ;;
+    --profile) profile="$2"; shift ;;
+    --pull) pull=1 ;;
+    --build-base) docker build --pull -t "$BASE_IMAGE" "$BOX_DIR"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; claude_args=("$@"); break ;;
+    -*) echo "unknown option: $1" >&2; usage; exit 2 ;;
+    *) [[ -n "$ws" ]] && { echo "only one workspace allowed" >&2; exit 2; }; ws="$1" ;;
+  esac
+  shift
+done
+
+ws="${ws:-scratch}"
+[[ "$ws" =~ ^[A-Za-z0-9._-]+$ && "$ws" != "." && "$ws" != ".." ]] \
+  || { echo "workspace must be a plain name, got: $ws" >&2; exit 2; }
+[[ "$profile" =~ ^[A-Za-z0-9_-]+$ ]] \
+  || { echo "profile must be a plain name, got: $profile" >&2; exit 2; }
+
+ws_path="$WS_ROOT/$ws"
+cfg="$ws_path/.claude-box"
+mkdir -p "$ws_path"
+
+# --- image -----------------------------------------------------------------------------------
+if [[ $pull -eq 1 ]] || ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
+  docker pull "$BASE_IMAGE"
+fi
+image="$BASE_IMAGE"
+if [[ -f "$cfg/Dockerfile" ]]; then
+  image="claude-box-project-$(echo "$ws" | tr '[:upper:]' '[:lower:]')"
+  echo "[claude-box] building project image $image" >&2
+  docker build -q -t "$image" "$cfg" >/dev/null
+fi
+
+# --- secrets: Keychain item "claude-box/<workspace>/<VAR>" -> env VAR -------------------------
+# Scoped to this workspace's namespace, so a project can never ask for other Keychain items.
+env_args=()
+if [[ -f "$cfg/secrets.txt" ]]; then
+  while read -r var; do
+    var="${var%%#*}"; var="$(echo "$var" | xargs)"
+    [[ -z "$var" ]] && continue
+    [[ "$var" =~ ^[A-Z_][A-Z0-9_]*$ ]] || { echo "[claude-box] skipping invalid name: $var" >&2; continue; }
+    if val="$(security find-generic-password -s "claude-box/$ws/$var" -w 2>/dev/null)" && [[ -n "$val" ]]; then
+      export "$var=$val"
+      env_args+=(-e "$var")
+    else
+      echo "[claude-box] missing secret $var; add it with:" >&2
+      echo "    security add-generic-password -s claude-box/$ws/$var -a \"\$USER\" -w" >&2
+    fi
+  done < "$cfg/secrets.txt"
+  unset val
+fi
+
+if [[ $shell -eq 1 ]]; then
+  cmd=(bash)
+else
+  cmd=(claude)
+  [[ -f "$cfg/mcp.json" ]] && cmd+=(--mcp-config /workspace/.claude-box/mcp.json)
+  cmd+=("${claude_args[@]+"${claude_args[@]}"}")
+fi
+
+# --- link opener: container xdg-open/$BROWSER -> `open` on the Mac -----------------------------
+open_port=""
+for p in $(jot -r 30 20000 60000); do
+  nc -z 127.0.0.1 "$p" 2>/dev/null || { open_port="$p"; break; }
+done
+open_token="$(openssl rand -hex 16)"
+bridge_pid=""
+if [[ -n "$open_port" ]]; then
+  (
+    while true; do
+      t=""; u=""
+      { read -r t; read -r u; } < <(nc -l 127.0.0.1 "$open_port" 2>/dev/null)
+      if [[ "$t" == "$open_token" && "$u" =~ ^https?://[^[:space:]]+$ ]]; then
+        open "$u"
+      else
+        sleep 0.2
+      fi
+    done
+  ) 2>/dev/null &
+  bridge_pid=$!
+  disown "$bridge_pid"
+fi
+cleanup() {
+  [[ -n "$bridge_pid" ]] && kill "$bridge_pid" 2>/dev/null
+  [[ -n "$open_port" ]] && pkill -f "nc -l 127.0.0.1 $open_port" 2>/dev/null
+  return 0
+}
+trap cleanup EXIT
+
+# Only the workspace and the profile's home volume are mounted. Nothing from the host home
+# (~/.claude, ~/.ssh, ~/.gitconfig, gh/glab/gcloud config) and no env passthrough beyond the above.
+docker run --rm -it --init \
+  --name "claude-box-${profile}-${ws}-$$" \
+  --hostname "claude-box-${ws}" \
+  -e CLAUDE_BOX_OPEN_PORT="$open_port" -e CLAUDE_BOX_OPEN_TOKEN="$open_token" \
+  -e TERM="${TERM:-xterm-256color}" -e COLORTERM="${COLORTERM:-}" \
+  "${env_args[@]+"${env_args[@]}"}" \
+  -v "claude-box-home-${profile}:/home/agent" \
+  -v "$ws_path:/workspace" \
+  "$image" "${cmd[@]}"

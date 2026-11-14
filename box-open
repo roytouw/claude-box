@@ -1,0 +1,11 @@
+#!/bin/bash
+# xdg-open / $BROWSER replacement: forwards http(s) URLs to the claude-box launcher on the Mac,
+# which opens them in the Mac's default browser. Falls back to printing the URL.
+url="${1:-}"
+if [[ "$url" =~ ^https?:// && -n "${CLAUDE_BOX_OPEN_PORT:-}" ]] \
+   && exec 3<>"/dev/tcp/host.docker.internal/${CLAUDE_BOX_OPEN_PORT}" 2>/dev/null; then
+  printf '%s\n%s\n' "${CLAUDE_BOX_OPEN_TOKEN:-}" "$url" >&3
+  exec 3>&-
+  exit 0
+fi
+echo "Open this URL on your Mac: $url" >&2
