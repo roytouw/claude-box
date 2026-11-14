@@ -14,6 +14,7 @@
 #   .claude-box/color        terminal background while the box runs, e.g. #4A2208
 #   .claude-box/profile      profile to use for this workspace, e.g. work (default: private)
 #   .claude-box/connectors   "on" enables the Claude account's claude.ai connectors (default: off)
+#   .claude-box/docker       "on" gives the box its own private Docker daemon (default: off)
 #
 # Options:
 #   --chat         start a plain new `claude` chat instead of agent view
@@ -31,7 +32,7 @@ WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
 profile=""; shell=0; chat=0; pull=0; ws=""
 claude_args=()
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -158,7 +159,39 @@ if [[ -n "$tty_out" ]]; then
   fi
 fi
 
+# --- optional Docker: a private daemon per workspace (.claude-box/docker = on) -------------------
+# Never the host's Docker Desktop socket: that would let the box mount your whole home folder.
+# The daemon runs privileged in its own container, sees only the workspace (at the same path, so
+# bind mounts and compose files work), and the box shares its network so published ports are on
+# localhost. Images are cached per workspace. It stops when the last box using it exits.
+DIND_IMAGE="docker:29.9.2-dind"
+dind_name="claude-box-dind-${ws}"
+net_args=(--hostname "claude-box-${ws}")
+dind_args=()
+if [[ "$(setting docker)" == "on" ]]; then
+  if [[ "$(docker inspect -f '{{.State.Running}}' "$dind_name" 2>/dev/null)" != "true" ]]; then
+    docker rm -f "$dind_name" >/dev/null 2>&1 || true
+    echo "[claude-box] starting private Docker daemon for $ws" >&2
+    docker image inspect "$DIND_IMAGE" >/dev/null 2>&1 || docker pull -q "$DIND_IMAGE" >/dev/null
+    docker run -d --privileged --name "$dind_name" \
+      -v "claude-box-dind-${ws}:/var/lib/docker" \
+      -v "claude-box-dind-run-${ws}:/run/dind" \
+      -v "$ws_path:/workspace/$ws" \
+      "$DIND_IMAGE" dockerd --host=unix:///run/dind/docker.sock --group=1000 >/dev/null
+  fi
+  for _ in $(seq 1 60); do
+    docker exec "$dind_name" docker -H unix:///run/dind/docker.sock info >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  net_args=(--network "container:$dind_name")
+  dind_args=(-v "claude-box-dind-run-${ws}:/run/dind" -e DOCKER_HOST=unix:///run/dind/docker.sock
+             --label "claude-box.uses-dind=$dind_name")
+fi
+
 cleanup() {
+  if [[ ${#dind_args[@]} -gt 0 && -z "$(docker ps -q --filter "label=claude-box.uses-dind=$dind_name")" ]]; then
+    docker rm -f "$dind_name" >/dev/null 2>&1
+  fi
   [[ -n "$bridge_pid" ]] && kill "$bridge_pid" 2>/dev/null
   [[ -n "$open_port" ]] && pkill -f "nc -l 127.0.0.1 $open_port" 2>/dev/null
   if [[ -n "$tty_out" ]]; then
@@ -177,10 +210,11 @@ trap cleanup EXIT
 # Each project gets its own path (/workspace/<name>), so Claude keeps separate history per project.
 docker run --rm -it --init \
   --name "claude-box-${profile}-${ws}-$$" \
-  --hostname "claude-box-${ws}" \
+  "${net_args[@]}" \
   -e CLAUDE_BOX_OPEN_PORT="$open_port" -e CLAUDE_BOX_OPEN_TOKEN="$open_token" \
   -e TERM="${TERM:-xterm-256color}" -e COLORTERM="${COLORTERM:-}" \
   "${env_args[@]+"${env_args[@]}"}" \
+  "${dind_args[@]+"${dind_args[@]}"}" \
   -v "claude-box-home-${profile}:/home/agent" \
   -v "$ws_path:/workspace/$ws" -w "/workspace/$ws" \
   "$image" "${cmd[@]}"
