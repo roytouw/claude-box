@@ -36,7 +36,9 @@ RUN chmod 0755 /usr/local/bin/box-open /usr/local/bin/box-clip \
     && ln -s box-clip /usr/local/bin/xclip \
     && ln -s box-clip /usr/local/bin/xsel
 
+# gh keeps no logins in the persistent home: it only works with a GH_TOKEN the project provides.
 ENV BROWSER=/usr/local/bin/box-open \
+    GH_CONFIG_DIR=/tmp/gh \
     DISABLE_AUTOUPDATER=1 \
     ENABLE_CLAUDEAI_MCP_SERVERS=false
 
