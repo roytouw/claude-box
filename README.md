@@ -9,7 +9,31 @@ Keychain at start-up and are never baked into an image.
 
 ```sh
 git clone https://github.com/roytouw/claude-box ~/claude-box
-ln -s ~/claude-box/bin/claude-box ~/.local/bin/claude-box
+~/claude-box/bin/claude-box doctor   # checks your system and tells you what's still needed
+```
+
+`doctor` changes nothing; it prints the commands to run yourself (putting `claude-box` on your
+PATH, optionally registering the MCP server).
+
+## Set up a workspace
+
+**With Claude** (optional MCP server, needs [uv](https://docs.astral.sh/uv/)): register it once
+yourself, then just ask Claude, e.g. *"set up a claude-box for gitlab.com/acme/shop"*. Claude
+clones the repo, asks about profile, connectors, Docker and color, and walks you through the
+tokens. Secrets go from your clipboard straight into the Keychain; Claude never sees them.
+
+```sh
+claude mcp add claude-box -- uv run --script ~/claude-box/mcp/server.py
+```
+
+**Or by hand:**
+
+```sh
+claude-box init <repo-url> [name]      # clone over HTTPS, generate .claude-box/ (detects Go, pnpm)
+claude-box secret <name> GITLAB_TOKEN  # copy the token first: stores the clipboard, checks it, clears it
+claude-box set <name> docker on        # profile | connectors | docker | color | env
+claude-box doctor <name>               # checks remotes, secrets (against GitHub/GitLab/Jira), image
+claude-box list                        # all workspaces
 ```
 
 ## Use
@@ -47,12 +71,10 @@ can't change the repos (see [multi-repo example](examples/multi-repo-github-gitl
   color        terminal background while the box runs, e.g. #6E2A0C
 ```
 
-Store each secret once in your Keychain. Copy it, then store it from the clipboard (the
-interactive `-w` prompt silently cuts input at 128 characters):
-
-```sh
-security add-generic-password -U -s claude-box/<workspace>/<VAR> -a "$USER" -w "$(pbpaste)"
-```
+Store each secret once in your Keychain: copy it, then run `claude-box secret <workspace> <VAR>`.
+It refuses obvious mistakes (a copied command, whitespace, a truncated token), checks the token
+against GitHub/GitLab/Jira and clears the clipboard. (Avoid the interactive `security -w` prompt:
+it silently cuts input at 128 characters.)
 
 Examples: [Go + GitHub + Jira MCP](examples/go-with-jira) ·
 [several repos, GitHub + GitLab, work profile](examples/multi-repo-github-gitlab).

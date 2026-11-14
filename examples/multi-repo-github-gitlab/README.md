@@ -30,7 +30,8 @@ the workspace folder, next to the clones:
    - `GITLAB_TOKEN`: GitLab → Preferences → Access tokens, scopes `read_repository`,
      `write_repository` (add `api` if Claude should open MRs with `glab`).
    ```sh
-   security add-generic-password -U -s claude-box/example-team/GITLAB_TOKEN -a "$USER" -w "$(pbpaste)"
+   claude-box secret example-team GITLAB_TOKEN   # copy the token first; it reads the clipboard
+   claude-box secret example-team GH_TOKEN
    ```
 4. `claude-box example-team`. The first run on the `work` profile asks you to log in: use the
    work Claude account.
