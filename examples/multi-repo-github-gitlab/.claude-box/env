@@ -1,0 +1,2 @@
+# Non-secret settings, KEY=value per line.
+GITLAB_HOST=gitlab.example.com

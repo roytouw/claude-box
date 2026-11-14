@@ -10,12 +10,15 @@
 #   .claude-box/Dockerfile   project image, FROM ghcr.io/roytouw/claude-box:base
 #   .claude-box/secrets.txt  env var names, read from Keychain items "claude-box/<workspace>/<VAR>"
 #   .claude-box/mcp.json     MCP servers for claude (use ${VAR} for secrets)
+#   .claude-box/env          non-secret env vars, KEY=value per line (e.g. GITLAB_HOST)
 #   .claude-box/color        terminal background while the box runs, e.g. #4A2208
+#   .claude-box/profile      profile to use for this workspace, e.g. work (default: private)
+#   .claude-box/connectors   "on" enables the Claude account's claude.ai connectors (default: off)
 #
 # Options:
 #   --chat         start a plain new `claude` chat instead of agent view
 #   --shell        open bash in the box instead of claude
-#   --profile P    home volume to use: Claude login, git identity, gh config (default: "private")
+#   --profile P    home volume to use (Claude login, plugins, memory); overrides .claude-box/profile
 #   --pull         pull the latest base image first
 #   --build-base   build the base image locally from this repo, then exit
 #   -h, --help
@@ -25,10 +28,10 @@ BOX_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 BASE_IMAGE="ghcr.io/roytouw/claude-box:base"
 WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
 
-profile="private"; shell=0; chat=0; pull=0; ws=""
+profile=""; shell=0; chat=0; pull=0; ws=""
 claude_args=()
 
-usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,12 +51,19 @@ done
 ws="${ws:-scratch}"
 [[ "$ws" =~ ^[A-Za-z0-9._-]+$ && "$ws" != "." && "$ws" != ".." ]] \
   || { echo "workspace must be a plain name, got: $ws" >&2; exit 2; }
-[[ "$profile" =~ ^[A-Za-z0-9_-]+$ ]] \
-  || { echo "profile must be a plain name, got: $profile" >&2; exit 2; }
 
 ws_path="$WS_ROOT/$ws"
 cfg="$ws_path/.claude-box"
 mkdir -p "$ws_path"
+
+# Project settings: one value per file, so they are trivial to read and diff.
+setting() { [[ -f "$cfg/$1" ]] && head -1 "$cfg/$1" | tr -d "[:space:]" || true; }
+[[ -z "$profile" ]] && profile="$(setting profile)"
+profile="${profile:-private}"
+[[ "$profile" =~ ^[A-Za-z0-9_-]+$ ]] \
+  || { echo "profile must be a plain name, got: $profile" >&2; exit 2; }
+connectors="$(setting connectors)"; [[ "$connectors" == "on" ]] || connectors="off"
+echo "[claude-box] workspace $ws · profile $profile · connectors $connectors" >&2
 
 # --- image -----------------------------------------------------------------------------------
 if [[ $pull -eq 1 ]] || ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
@@ -78,12 +88,25 @@ if [[ -f "$cfg/secrets.txt" ]]; then
       export "$var=$val"
       env_args+=(-e "$var")
     else
-      echo "[claude-box] missing secret $var; add it with:" >&2
-      echo "    security add-generic-password -s claude-box/$ws/$var -a \"\$USER\" -w" >&2
+      echo "[claude-box] missing secret $var; copy it, then store it with:" >&2
+      echo "    security add-generic-password -U -s claude-box/$ws/$var -a \"\$USER\" -w \"\$(pbpaste)\"" >&2
     fi
   done < "$cfg/secrets.txt"
   unset val
 fi
+
+# Non-secret settings: .claude-box/env with KEY=value lines (e.g. GITLAB_HOST=gitlab.example.com).
+if [[ -f "$cfg/env" ]]; then
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    if [[ "$line" =~ ^[A-Z_][A-Z0-9_]*=.*$ ]]; then env_args+=(-e "$line")
+    else echo "[claude-box] skipping invalid env line: $line" >&2; fi
+  done < "$cfg/env"
+fi
+
+[[ "$connectors" == "on" ]] && env_args+=(-e ENABLE_CLAUDEAI_MCP_SERVERS=true)
 
 if [[ $shell -eq 1 ]]; then
   cmd=(bash)

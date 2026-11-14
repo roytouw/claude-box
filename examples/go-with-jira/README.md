@@ -25,5 +25,5 @@ A complete `.claude-box/` for a Go project that uses GitHub and Jira/Confluence.
    ```
    Use `-w "$(pbpaste)"` rather than the interactive prompt: the prompt silently cuts input at
    128 characters, and Atlassian tokens are 192.
-4. Once, inside the box (`claude-box --shell myproject`): `gh auth setup-git`.
-5. Run `claude-box myproject` and check `/mcp` shows `jira` connected.
+4. Run `claude-box myproject` and check `/mcp` shows `jira` connected. git pushes with
+   `GH_TOKEN` automatically.
