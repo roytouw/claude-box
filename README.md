@@ -31,6 +31,7 @@ Add a `.claude-box/` folder to the project repo:
   Dockerfile   FROM ghcr.io/roytouw/claude-box:base  + your project's tools
   secrets.txt  one env var name per line, e.g. GH_TOKEN
   mcp.json     MCP servers, using ${VAR} for secrets
+  color        terminal background while the box runs, e.g. #4A2208
 ```
 
 Store each secret once in your Keychain; claude-box prints the command when one is missing:
