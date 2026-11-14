@@ -89,7 +89,7 @@ if [[ $shell -eq 1 ]]; then
   cmd=(bash)
 else
   if [[ $chat -eq 1 ]]; then cmd=(claude); else cmd=(claude agents); fi
-  [[ -f "$cfg/mcp.json" ]] && cmd+=(--mcp-config /workspace/.claude-box/mcp.json)
+  [[ -f "$cfg/mcp.json" ]] && cmd+=(--mcp-config "/workspace/$ws/.claude-box/mcp.json")
   cmd+=("${claude_args[@]+"${claude_args[@]}"}")
 fi
 
@@ -151,6 +151,7 @@ trap cleanup EXIT
 
 # Only the workspace and the profile's home volume are mounted. Nothing from the host home
 # (~/.claude, ~/.ssh, ~/.gitconfig, gh/glab/gcloud config) and no env passthrough beyond the above.
+# Each project gets its own path (/workspace/<name>), so Claude keeps separate history per project.
 docker run --rm -it --init \
   --name "claude-box-${profile}-${ws}-$$" \
   --hostname "claude-box-${ws}" \
@@ -158,5 +159,5 @@ docker run --rm -it --init \
   -e TERM="${TERM:-xterm-256color}" -e COLORTERM="${COLORTERM:-}" \
   "${env_args[@]+"${env_args[@]}"}" \
   -v "claude-box-home-${profile}:/home/agent" \
-  -v "$ws_path:/workspace" \
+  -v "$ws_path:/workspace/$ws" -w "/workspace/$ws" \
   "$image" "${cmd[@]}"
