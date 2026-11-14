@@ -1,4 +1,4 @@
-# claude-box base image: Claude Code + gh + glab + git + uv, as a non-root user, with helpers that
+# claude-box base image: Claude Code + gh + glab + git + uv + docker CLI, as a non-root user, with helpers that
 # open links in the host browser and copy to the host clipboard. Contains no credentials.
 FROM ghcr.io/astral-sh/uv:0.8.0 AS uv
 
@@ -17,7 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
          -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
          > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /usr/share/keyrings/docker.asc \
+    && echo "deb [signed-by=/usr/share/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+         > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+         gh docker-ce-cli docker-compose-plugin docker-buildx-plugin \
     && curl -fsSL -o /tmp/glab.deb \
          "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_$(dpkg --print-architecture).deb" \
     && apt-get install -y --no-install-recommends /tmp/glab.deb && rm /tmp/glab.deb \

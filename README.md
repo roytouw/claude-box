@@ -43,6 +43,7 @@ can't change the repos (see [multi-repo example](examples/multi-repo-github-gitl
   mcp.json     MCP servers, using ${VAR} for secrets
   profile      profile to use, e.g. work (--profile overrides it)
   connectors   "on" to allow the Claude account's claude.ai connectors (off by default)
+  docker       "on" to give the box its own private Docker daemon (off by default, see below)
   color        terminal background while the box runs, e.g. #6E2A0C
 ```
 
@@ -69,3 +70,15 @@ Scope the tokens so an agent can only touch what you pick:
   it may edit `.github/workflows`), expiry 90 days.
 - **GitLab**: personal or group access token with `read_repository` + `write_repository`
   (add `api` for `glab` merge requests), with an expiry date.
+
+## Docker inside the box (opt-in)
+
+With `docker` set to `on`, the box gets its own Docker daemon (`docker:dind`), never your host's
+Docker Desktop socket. `docker build`, `docker run -v $(PWD):…` and `docker compose` work, and
+published ports are reachable on `localhost` inside the box. The daemon only sees the workspace,
+caches images per workspace, and stops when the last box using it exits.
+
+The daemon runs **privileged** in the Docker Desktop VM. That is a trade-off: an agent that
+abuses it could reach the VM, and the VM can see the folders Docker Desktop shares from your Mac.
+To shrink that, limit Docker Desktop → Settings → Resources → File sharing to `~/claude-box`
+(this also affects other bind mounts you use on the Mac). Only turn it on where you need it.
