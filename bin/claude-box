@@ -64,12 +64,27 @@ fi
 # --- secrets: Keychain item "claude-box/<workspace>/<VAR>" -> env VAR -------------------------
 # Scoped to this workspace's namespace, so a project can never ask for other Keychain items.
 env_args=()
+
+# Pasting into the `security -w` prompt easily adds stray whitespace or bracketed-paste markers.
+# `security -w` also prints values with non-printable bytes as hex. Undo all of that.
+clean_secret() {
+  local v="$1"
+  if [[ ${#v} -ge 16 && $(( ${#v} % 2 )) -eq 0 && "$v" =~ ^[0-9a-f]+$ ]]; then
+    v="$(printf '%s' "$v" | xxd -r -p)"
+  fi
+  v="${v//$'\e[200~'/}"; v="${v//$'\e[201~'/}"
+  v="${v#"${v%%[![:space:]]*}"}"   # leading whitespace
+  v="${v%"${v##*[![:space:]]}"}"   # trailing whitespace
+  printf '%s' "$v"
+}
+
 if [[ -f "$cfg/secrets.txt" ]]; then
   while read -r var; do
     var="${var%%#*}"; var="$(echo "$var" | xargs)"
     [[ -z "$var" ]] && continue
     [[ "$var" =~ ^[A-Z_][A-Z0-9_]*$ ]] || { echo "[claude-box] skipping invalid name: $var" >&2; continue; }
-    if val="$(security find-generic-password -s "claude-box/$ws/$var" -w 2>/dev/null)" && [[ -n "$val" ]]; then
+    if val="$(security find-generic-password -s "claude-box/$ws/$var" -w 2>/dev/null)" \
+       && val="$(clean_secret "$val")" && [[ -n "$val" ]]; then
       export "$var=$val"
       env_args+=(-e "$var")
     else
