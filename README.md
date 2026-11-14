@@ -34,21 +34,14 @@ Add a `.claude-box/` folder to the project repo:
   color        terminal background while the box runs, e.g. #4A2208
 ```
 
-Store each secret once in your Keychain; claude-box prints the command when one is missing:
+Store each secret once in your Keychain. Copy it, then store it from the clipboard (the
+interactive `-w` prompt silently cuts input at 128 characters):
 
 ```sh
-security add-generic-password -s claude-box/<workspace>/<VAR> -a "$USER" -w
+security add-generic-password -U -s claude-box/<workspace>/<VAR> -a "$USER" -w "$(pbpaste)"
 ```
 
-Example `Dockerfile` for a Go project:
-
-```dockerfile
-FROM ghcr.io/roytouw/claude-box:base
-USER root
-RUN curl -fsSL "https://go.dev/dl/go1.26.2.linux-$(dpkg --print-architecture).tar.gz" | tar -C /usr/local -xz
-USER agent
-ENV PATH="/usr/local/go/bin:${PATH}"
-```
+Full example (Go + GitHub + Jira MCP): [examples/go-with-jira](examples/go-with-jira).
 
 ## GitHub access
 
@@ -58,5 +51,5 @@ Give the box a fine-grained token so an agent can only touch the repos you pick:
    **Only select repositories**, permissions **Contents** + **Pull requests** read/write
    (add **Workflows** if it may edit `.github/workflows`), expiry 90 days.
 2. List `GH_TOKEN` in `.claude-box/secrets.txt` and store the token:
-   `security add-generic-password -s claude-box/<workspace>/GH_TOKEN -a "$USER" -w`
+   `security add-generic-password -U -s claude-box/<workspace>/GH_TOKEN -a "$USER" -w "$(pbpaste)"`
 3. Clone over HTTPS (the box has no SSH keys) and run `gh auth setup-git` once in the box.
