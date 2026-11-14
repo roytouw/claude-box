@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
     --shell) shell=1 ;;
     --profile) profile="$2"; shift ;;
     --pull) pull=1 ;;
-    --build-base) docker build --pull -t "$BASE_IMAGE" "$BOX_DIR"; exit 0 ;;
+    --build-base) docker build --pull -t "$BASE_IMAGE" "$BOX_DIR/image"; exit 0 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; claude_args=("$@"); break ;;
     -*) echo "unknown option: $1" >&2; usage; exit 2 ;;
