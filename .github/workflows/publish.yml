@@ -27,7 +27,7 @@ jobs:
         run: echo "tag=$(date -u +%Y.%m.%d)" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
-          context: .
+          context: image
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
