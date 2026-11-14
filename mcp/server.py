@@ -9,7 +9,8 @@ server always behave the same. No tool accepts or returns a secret value: secret
 user's clipboard straight into the macOS Keychain.
 
 Register it yourself (claude-box never does this for you):
-    claude mcp add claude-box -- uv run --script ~/claude-box/mcp/server.py
+    claude mcp add claude-box -- claude-box-mcp                              # installed package
+    claude mcp add claude-box -- uv run --script ~/claude-box/mcp/server.py  # from a clone
 """
 
 import os
@@ -19,7 +20,11 @@ from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
-CLI = Path(__file__).resolve().parent.parent / "bin" / "claude-box"
+_HERE = Path(__file__).resolve().parent
+# Installed package: bundled next to this module. Clone: the repo's bin/.
+CLI = next(
+    p for p in (_HERE / "data" / "bin" / "claude-box", _HERE.parent / "bin" / "claude-box") if p.exists()
+)
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 mcp = MCPServer(
@@ -58,7 +63,7 @@ Atlassian API token created while signed in as the account used for JIRA_USERNAM
 def run(*args: str) -> str:
     """Run the claude-box CLI and return its output (without colors) plus the exit status."""
     proc = subprocess.run(
-        [str(CLI), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900,
+        ["/bin/bash", str(CLI), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900,
         env={**os.environ, "CLAUDE_BOX_VIA_MCP": "1"},
     )
     out = ANSI.sub("", (proc.stdout + proc.stderr).strip())
@@ -138,5 +143,9 @@ def store_secret_from_clipboard(workspace: str, var: str) -> str:
     return run("secret", workspace, var)
 
 
-if __name__ == "__main__":
+def main() -> None:
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()

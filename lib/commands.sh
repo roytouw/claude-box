@@ -113,8 +113,10 @@ doctor_system() {
   if docker info >/dev/null 2>&1; then ok "Docker running"; else bad "Docker isn't running"; hint "install/start Docker Desktop: https://www.docker.com/products/docker-desktop/"; fi
   command -v security >/dev/null && ok "macOS Keychain available" || bad "macOS 'security' tool not found (claude-box needs macOS)"
   for t in jq curl git; do command -v "$t" >/dev/null && ok "$t" || { bad "$t not found"; hint "brew install $t"; }; done
-  local on_path; on_path="$(command -v claude-box 2>/dev/null || true)"
-  if [[ -n "$on_path" && "$(readlink -f "$on_path")" == "$BOX_DIR/bin/claude-box" ]]; then ok "claude-box on your PATH"
+  local on_path installed=0; on_path="$(command -v claude-box 2>/dev/null || true)"
+  [[ "$BOX_DIR" == */claude_box/data ]] && installed=1   # running from `uv tool install`, not a clone
+  if [[ -n "$on_path" ]]; then ok "claude-box on your PATH ($on_path)"
+  elif [[ $installed -eq 1 ]]; then warn "claude-box isn't on your PATH; add uv's tool folder with:"; hint "uv tool update-shell"
   else warn "claude-box isn't on your PATH (optional); to add it, run:"; hint "ln -s $BOX_DIR/bin/claude-box ~/.local/bin/claude-box"; fi
   if command -v uv >/dev/null; then ok "uv $(uv --version | awk '{print $2}')"
   else warn "uv not found (needed only for the MCP server)"; hint "brew install uv"; fi
@@ -126,7 +128,8 @@ doctor_system() {
       hint "It can clone repos into $WS_ROOT, write .claude-box/ config, store secrets from your"
       hint "clipboard in the Keychain (claude-box/* items only) and run these checks. It never sees"
       hint "or returns secret values. To add it, run yourself:"
-      hint "claude mcp add claude-box -- uv run --script $BOX_DIR/mcp/server.py"
+      if command -v claude-box-mcp >/dev/null; then hint "claude mcp add claude-box -- claude-box-mcp"
+      else hint "claude mcp add claude-box -- uv run --script $BOX_DIR/mcp/server.py"; fi
     fi
   fi
   docker image inspect "$BASE_IMAGE" >/dev/null 2>&1 && ok "base image present" || warn "base image not pulled yet (happens on first start)"

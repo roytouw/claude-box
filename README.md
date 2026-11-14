@@ -5,13 +5,23 @@ The container only sees the project folder and its own home volume: no host `~/.
 (plugins, skills, memory), no SSH keys, no git, gh or glab config. Secrets come from your macOS
 Keychain at start-up and are never baked into an image.
 
-## Setup with Claude (MCP)
+## Install
 
-Needs [uv](https://docs.astral.sh/uv/). Clone the repo and register the MCP server yourself:
+Needs [uv](https://docs.astral.sh/uv/) and Docker Desktop. This installs the `claude-box` and
+`claude-box-mcp` commands, pinned to a release (update later with `uv tool upgrade claude-box`):
 
 ```sh
-git clone https://github.com/roytouw/claude-box ~/claude-box
-claude mcp add claude-box -- uv run --script ~/claude-box/mcp/server.py
+uv tool install git+https://github.com/roytouw/claude-box@v0.1.0
+```
+
+Workspaces live in `~/claude-box/workspaces` (override with `CLAUDE_BOX_WORKSPACES`).
+
+## Setup with Claude (MCP)
+
+Register the MCP server yourself:
+
+```sh
+claude mcp add claude-box -- claude-box-mcp
 ```
 
 Then ask Claude, e.g. *"set up a claude-box for gitlab.com/acme/shop"*. Claude checks your system
@@ -22,8 +32,6 @@ tokens. Secrets go from your clipboard straight into the Keychain; Claude never 
 ## Manual setup
 
 ```sh
-git clone https://github.com/roytouw/claude-box ~/claude-box
-ln -s ~/claude-box/bin/claude-box ~/.local/bin/claude-box
 claude-box doctor                      # checks your system (changes nothing)
 
 claude-box init <repo-url> [name]      # clone over HTTPS, generate .claude-box/ (detects Go, pnpm)
@@ -101,3 +109,10 @@ The daemon runs **privileged** in the Docker Desktop VM. That is a trade-off: an
 abuses it could reach the VM, and the VM can see the folders Docker Desktop shares from your Mac.
 To shrink that, limit Docker Desktop → Settings → Resources → File sharing to `~/claude-box`
 (this also affects other bind mounts you use on the Mac). Only turn it on where you need it.
+
+## Develop
+
+Work from a clone: `bin/claude-box` runs directly, and the MCP server runs standalone with
+`claude mcp add claude-box-dev -- uv run --script <clone>/mcp/server.py`. Try an install of your
+checkout with `uv tool install --force .`. Releases are git tags (`v0.1.0`, …) matching the
+version in `pyproject.toml`.
