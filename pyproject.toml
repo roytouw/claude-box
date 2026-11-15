@@ -1,0 +1,30 @@
+[project]
+name = "claude-box"
+version = "0.1.0"
+description = "Run Claude Code in a Docker container per project, separated from your host setup"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["mcp>=2.0,<3"]
+
+[project.urls]
+Homepage = "https://github.com/roytouw/claude-box"
+
+[project.scripts]
+claude-box = "claude_box.cli:main"
+claude-box-mcp = "claude_box.mcp_server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/claude_box"]
+
+# The bash launcher, its commands and the image sources ship unchanged as package data;
+# the MCP server is the same file that also runs standalone with `uv run --script`.
+[tool.hatch.build.targets.wheel.force-include]
+"bin" = "claude_box/data/bin"
+"lib" = "claude_box/data/lib"
+"image" = "claude_box/data/image"
+"mcp/server.py" = "claude_box/mcp_server.py"

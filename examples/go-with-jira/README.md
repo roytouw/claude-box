@@ -21,9 +21,10 @@ A complete `.claude-box/` for a Go project that uses GitHub and Jira/Confluence.
    - `JIRA_API_TOKEN`: [Atlassian API token](https://id.atlassian.com/manage-profile/security/api-tokens),
      created while signed in with the account you put in `JIRA_USERNAME`.
    ```sh
-   security add-generic-password -U -s claude-box/myproject/GH_TOKEN -a "$USER" -w "$(pbpaste)"
+   claude-box secret myproject GH_TOKEN        # copy each value first; it reads the clipboard
+   claude-box secret myproject JIRA_USERNAME
+   claude-box secret myproject JIRA_API_TOKEN
    ```
-   Use `-w "$(pbpaste)"` rather than the interactive prompt: the prompt silently cuts input at
-   128 characters, and Atlassian tokens are 192.
+   Each one is checked (GitHub, Jira) and the clipboard is cleared afterwards.
 4. Run `claude-box myproject` and check `/mcp` shows `jira` connected. git pushes with
    `GH_TOKEN` automatically.

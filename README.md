@@ -7,9 +7,38 @@ Keychain at start-up and are never baked into an image.
 
 ## Install
 
+Needs [uv](https://docs.astral.sh/uv/) and Docker Desktop. This installs the `claude-box` and
+`claude-box-mcp` commands, pinned to a release (update later with `uv tool upgrade claude-box`):
+
 ```sh
-git clone https://github.com/roytouw/claude-box ~/claude-box
-ln -s ~/claude-box/bin/claude-box ~/.local/bin/claude-box
+uv tool install git+https://github.com/roytouw/claude-box@v0.1.0
+```
+
+Workspaces live in `~/claude-box/workspaces` (override with `CLAUDE_BOX_WORKSPACES`).
+
+## Setup with Claude (MCP)
+
+Register the MCP server yourself:
+
+```sh
+claude mcp add claude-box -- claude-box-mcp
+```
+
+Then ask Claude, e.g. *"set up a claude-box for gitlab.com/acme/shop"*. Claude checks your system
+first, clones the repo, asks about profile, connectors, Docker and color, and walks you through the
+tokens. Secrets go from your clipboard straight into the Keychain; Claude never sees them. Later,
+"my claude-box for shop doesn't work" makes Claude run the checks and tell you what to fix.
+
+## Manual setup
+
+```sh
+claude-box doctor                      # checks your system (changes nothing)
+
+claude-box init <repo-url> [name]      # clone over HTTPS, generate .claude-box/ (detects Go, pnpm)
+claude-box secret <name> GITLAB_TOKEN  # copy the token first: stores the clipboard, checks it, clears it
+claude-box set <name> docker on        # profile | connectors | docker | color | env
+claude-box doctor <name>               # checks remotes, secrets (against GitHub/GitLab/Jira), image
+claude-box list                        # all workspaces
 ```
 
 ## Use
@@ -47,12 +76,10 @@ can't change the repos (see [multi-repo example](examples/multi-repo-github-gitl
   color        terminal background while the box runs, e.g. #6E2A0C
 ```
 
-Store each secret once in your Keychain. Copy it, then store it from the clipboard (the
-interactive `-w` prompt silently cuts input at 128 characters):
-
-```sh
-security add-generic-password -U -s claude-box/<workspace>/<VAR> -a "$USER" -w "$(pbpaste)"
-```
+Store each secret once in your Keychain: copy it, then run `claude-box secret <workspace> <VAR>`.
+It refuses obvious mistakes (a copied command, whitespace, a truncated token), checks the token
+against GitHub/GitLab/Jira and clears the clipboard. (Avoid the interactive `security -w` prompt:
+it silently cuts input at 128 characters.)
 
 Examples: [Go + GitHub + Jira MCP](examples/go-with-jira) ·
 [several repos, GitHub + GitLab, work profile](examples/multi-repo-github-gitlab).
@@ -82,3 +109,10 @@ The daemon runs **privileged** in the Docker Desktop VM. That is a trade-off: an
 abuses it could reach the VM, and the VM can see the folders Docker Desktop shares from your Mac.
 To shrink that, limit Docker Desktop → Settings → Resources → File sharing to `~/claude-box`
 (this also affects other bind mounts you use on the Mac). Only turn it on where you need it.
+
+## Develop
+
+Work from a clone: `bin/claude-box` runs directly, and the MCP server runs standalone with
+`claude mcp add claude-box-dev -- uv run --script <clone>/mcp/server.py`. Try an install of your
+checkout with `uv tool install --force .`. Releases are git tags (`v0.1.0`, …) matching the
+version in `pyproject.toml`.
