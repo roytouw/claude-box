@@ -1,4 +1,4 @@
-# claude-box base image: Claude Code + gh + glab + git + uv + docker CLI, as a non-root user, with helpers that
+# claude-box base image: Claude Code + gh + glab + git + uv + docker CLI + kubectl + k9s, as a non-root user, with helpers that
 # open links in the host browser and copy to the host clipboard. Contains no credentials.
 FROM ghcr.io/astral-sh/uv:0.8.0 AS uv
 
@@ -10,6 +10,8 @@ LABEL org.opencontainers.image.source="https://github.com/roytouw/claude-box" \
 
 ARG CLAUDE_VERSION=latest
 ARG GLAB_VERSION=1.126.0
+ARG KUBECTL_VERSION=1.37.2
+ARG K9S_VERSION=0.51.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git gnupg jq less openssh-client procps ripgrep \
@@ -25,7 +27,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL -o /tmp/glab.deb \
          "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_$(dpkg --print-architecture).deb" \
     && apt-get install -y --no-install-recommends /tmp/glab.deb && rm /tmp/glab.deb \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL -o /usr/local/bin/kubectl \
+         "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/$(dpkg --print-architecture)/kubectl" \
+    && chmod 0755 /usr/local/bin/kubectl \
+    && curl -fsSL "https://github.com/derailed/k9s/releases/download/v${K9S_VERSION}/k9s_Linux_$(dpkg --print-architecture).tar.gz" \
+         | tar -xz -C /usr/local/bin k9s
 
 COPY --from=uv /uv /uvx /usr/local/bin/
 
