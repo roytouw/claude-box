@@ -38,8 +38,12 @@ Typical setup flow:
    fix (e.g. start Docker Desktop). The user may never have used the claude-box CLI: if it isn't
    on their PATH, give them the ln command doctor prints to run themselves, or use the full path
    in the start command at the end. Don't run commands on their machine for them.
-1. create_workspace with the repo URL. If cloning fails because the repo is private, the user
-   needs a token first (step 3), then call create_workspace again.
+1. create_workspace. Repos the user works on together (one team, one product, code that spans
+   repos) belong in ONE workspace: pass all their URLs in one call with a name. Only make
+   separate workspaces for unrelated projects; if unsure, ask. To add a repo to an existing
+   multi-repo workspace later, call create_workspace with that workspace's name and the new URL.
+   If cloning fails because a repo is private, the user needs a token first (step 3), then call
+   create_workspace again with the same arguments.
 2. Ask the user what matters, then configure_workspace:
    - Profile: call list_profiles first. A profile is just a named Claude home; its name says
      nothing about which account is in it (a profile called "private" can hold a work login).
@@ -102,13 +106,17 @@ def list_profiles() -> str:
 
 
 @mcp.tool()
-def create_workspace(repo_url: str, name: str | None = None) -> str:
-    """Create a workspace for a repo: clone it over HTTPS into ~/claude-box/workspaces/<name>,
-    generate .claude-box/ (Dockerfile with detected Go/pnpm versions, required token names) and keep
-    .claude-box/ out of the repo's git. Safe to call again, e.g. after storing a token for a
-    private repo. SSH URLs (git@host:path) are converted to HTTPS.
+def create_workspace(repo_urls: list[str], name: str | None = None) -> str:
+    """Create a workspace in ~/claude-box/workspaces/<name> with one or more repos, cloned over HTTPS.
+
+    One repo: the workspace is that repo; .claude-box/ is kept out of its git. Several repos (one
+    workspace for repos worked on together): each repo goes in its own subfolder, with
+    .claude-box/ and a CLAUDE.md describing the layout on top; name is required. Generates a
+    Dockerfile with the Go/pnpm versions found and lists the tokens needed per host (GH_TOKEN for
+    GitHub, GITLAB_TOKEN for GitLab). Safe to call again: after storing a token for private repos,
+    or with an existing multi-repo workspace's name to add repos. SSH URLs are converted to HTTPS.
     """
-    return run("init", repo_url, *([name] if name else []))
+    return run("init", *([name] if name else []), *repo_urls)
 
 
 @mcp.tool()

@@ -253,51 +253,93 @@ cmd_profiles() {
   done
 }
 
-# --- init: workspace + clone (HTTPS) + generated .claude-box/; safe to run again ------------------
+
+# --- init: a workspace with one or more repos, cloned over HTTPS, plus .claude-box/ ---------------
+# One repo: the workspace is that repo (.claude-box/ kept out of its git). Several repos: the
+# workspace is a plain folder with each repo in a subfolder and .claude-box/ + CLAUDE.md on top.
+# Safe to run again: existing clones and config are kept, missing repos are cloned or added.
+looks_like_url() { [[ "$1" == *://* || "$1" == git@*:* || "$1" =~ ^[A-Za-z0-9.-]+\.[a-z]{2,}/.+ ]]; }
+host_var() { case "$1" in github.com) echo GH_TOKEN ;; *gitlab*) echo GITLAB_TOKEN ;; esac; }
+
+clone_into() {  # $1 dir, $2 https url, $3 workspace
+  local dir="$1" url="$2" ws="$3" var tok="" user=x-access-token head
+  var="$(host_var "$(url_host "$url")")"; [[ "$var" == GITLAB_TOKEN ]] && user=oauth2
+  [[ -n "$var" ]] && tok="$(keychain "$ws" "$var")"
+  mkdir -p "$dir"; git -C "$dir" init -q
+  git -C "$dir" remote add origin "$url" 2>/dev/null || git -C "$dir" remote set-url origin "$url"
+  if CB_USER="$user" CB_TOKEN="$tok" GIT_TERMINAL_PROMPT=0 git -C "$dir" \
+       -c credential.helper= -c 'credential.helper=!f() { test "$1" = get && [ -n "$CB_TOKEN" ] && printf "username=%s\npassword=%s\n" "$CB_USER" "$CB_TOKEN"; }; f' \
+       fetch -q origin 2>/dev/null; then
+    git -C "$dir" remote set-head origin -a >/dev/null 2>&1 || true
+    head="$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)"
+    git -C "$dir" checkout -q -B "${head#origin/}" "$head"
+  else
+    rm -rf "$dir/.git"; rmdir "$dir" 2>/dev/null || true
+    return 1
+  fi
+}
+
 cmd_init() {
-  local url="${1:-}" ws="${2:-}"
-  [[ -n "$url" ]] || { echo "usage: claude-box init <repo-url> [workspace]" >&2; exit 2; }
-  url="$(https_url "$url")"; local host path; host="$(url_host "$url")"; path="$(url_path "$url")"
-  [[ "$url" == https://*/* ]] || { echo "can't parse repo url: $1" >&2; exit 2; }
-  ws="${ws:-$(basename "$path")}"; need_ws "$ws"
-  local d="$WS_ROOT/$ws" cfg; cfg="$(ws_cfg "$ws")"; mkdir -p "$cfg"
-
-  # Token for the host, so private repos can be cloned (and later pushed from the box).
-  local var=""
-  if [[ "$host" == github.com ]]; then var=GH_TOKEN
-  elif [[ "$host" == *gitlab* ]]; then var=GITLAB_TOKEN; [[ "$host" != gitlab.com ]] && cmd_set "$ws" env "GITLAB_HOST=$host" >/dev/null
+  local ws="" urls=() a
+  for a in "$@"; do
+    if looks_like_url "$a"; then urls+=("$(https_url "$a")")
+    elif [[ -z "$ws" ]]; then ws="$a"
+    else echo "usage: claude-box init [workspace] <repo-url>..." >&2; exit 2; fi
+  done
+  [[ ${#urls[@]} -gt 0 ]] || { echo "usage: claude-box init [workspace] <repo-url>...   (several repos = one workspace)" >&2; exit 2; }
+  if [[ -z "$ws" ]]; then
+    [[ ${#urls[@]} -eq 1 ]] || { echo "name the workspace when it holds several repos: claude-box init <name> <url> <url>..." >&2; exit 2; }
+    ws="$(basename "$(url_path "${urls[0]}")")"
   fi
-  [[ -n "$var" ]] && { secret_names "$ws" | grep -qx "$var" || echo "$var" >> "$cfg/secrets.txt"; }
+  need_ws "$ws"
+  local d="$WS_ROOT/$ws" cfg; cfg="$(ws_cfg "$ws")"
 
-  if [[ ! -d "$d/.git" ]]; then
-    local tok=""; [[ -n "$var" ]] && tok="$(keychain "$ws" "$var")"
-    local user=x-access-token; [[ "$var" == GITLAB_TOKEN ]] && user=oauth2
-    git -C "$d" init -q
-    git -C "$d" remote add origin "$url" 2>/dev/null || git -C "$d" remote set-url origin "$url"
-    if CB_USER="$user" CB_TOKEN="$tok" GIT_TERMINAL_PROMPT=0 git -C "$d" \
-         -c credential.helper= -c 'credential.helper=!f() { test "$1" = get && [ -n "$CB_TOKEN" ] && printf "username=%s\npassword=%s\n" "$CB_USER" "$CB_TOKEN"; }; f' \
-         fetch -q origin 2>/dev/null; then
-      git -C "$d" remote set-head origin -a >/dev/null 2>&1 || true
-      local head; head="$(git -C "$d" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)"
-      git -C "$d" checkout -q -B "${head#origin/}" "$head"
-      echo "Cloned $path into $d"
-    else
-      rm -rf "$d/.git"
-      echo "Couldn't clone $url yet (private repo?)."
-      if [[ -n "$var" ]]; then
-        echo "Create a token, copy it, then run:  claude-box secret $ws $var"
-        echo "and run this init again:            claude-box init $url $ws"
-      fi
-      return 1
+  # Layout: a single-repo workspace stays single; several repos (or an existing multi-repo
+  # workspace) means one subfolder per repo.
+  local multi=0
+  if [[ -d "$d/.git" ]]; then
+    local top; top="$(git -C "$d" remote get-url origin 2>/dev/null || true)"
+    if [[ ${#urls[@]} -gt 1 || "$(https_url "$top")" != "${urls[0]}" ]]; then
+      echo "Workspace $ws holds one repo at its top ($top); to work on several repos together," >&2
+      echo "create a new workspace with all of them: claude-box init <name> <url> <url>..." >&2
+      exit 2
     fi
+  elif [[ ${#urls[@]} -gt 1 || -n "$(ws_repos "$ws")" || -f "$d/CLAUDE.md" ]]; then
+    multi=1
   fi
-  grep -qx '.claude-box/' "$d/.git/info/exclude" 2>/dev/null || echo '.claude-box/' >> "$d/.git/info/exclude"
+  mkdir -p "$cfg"
 
-  # Generate a Dockerfile from what the repo uses (kept if it already exists).
-  local go pnpm notes=""
-  go="$(sed -n 's/^go \([0-9][0-9.]*\).*/\1/p' "$d/go.mod" 2>/dev/null | head -1 || true)"
-  [[ "$go" =~ ^[0-9]+\.[0-9]+$ ]] && go="$go.0"
-  pnpm="$(jq -r '.packageManager // empty' "$d/package.json" 2>/dev/null | sed -n 's/^pnpm@\([0-9.]*\).*/\1/p' || true)"
+  # One token per host, so private repos can be cloned and later pushed from the box.
+  local url host var gl
+  for url in "${urls[@]}"; do
+    host="$(url_host "$url")"; var="$(host_var "$host")"
+    [[ -n "$var" ]] && { secret_names "$ws" | grep -qx "$var" || echo "$var" >> "$cfg/secrets.txt"; }
+    if [[ "$var" == GITLAB_TOKEN && "$host" != gitlab.com ]]; then
+      gl="$(env_value "$ws" GITLAB_HOST)"
+      if [[ -z "$gl" ]]; then cmd_set "$ws" env "GITLAB_HOST=$host" >/dev/null
+      elif [[ "${gl#*://}" != "$host" ]]; then echo "Note: $url is on $host, but this workspace's GitLab is $gl (one GitLab host per workspace)."; fi
+    fi
+  done
+
+  local failed=() dir
+  for url in "${urls[@]}"; do
+    if [[ $multi -eq 1 ]]; then dir="$d/$(basename "$(url_path "$url")")"; else dir="$d"; fi
+    [[ -d "$dir/.git" ]] && continue
+    if clone_into "$dir" "$url" "$ws"; then echo "Cloned $(url_path "$url") into $dir"
+    else failed+=("$url"); echo "Couldn't clone $url yet (private repo?)."; fi
+  done
+  [[ $multi -eq 0 && -d "$d/.git" ]] && { grep -qx '.claude-box/' "$d/.git/info/exclude" 2>/dev/null || echo '.claude-box/' >> "$d/.git/info/exclude"; }
+
+  # Generate a Dockerfile from what the repos use (highest version wins; kept if it exists).
+  local repos r go="" pnpm="" v notes=""
+  repos="$(ws_repos "$ws")"
+  for r in $repos; do
+    v="$(sed -n 's/^go \([0-9][0-9.]*\).*/\1/p' "$r/go.mod" 2>/dev/null | head -1 || true)"
+    [[ "$v" =~ ^[0-9]+\.[0-9]+$ ]] && v="$v.0"
+    [[ -n "$v" ]] && go="$(printf '%s\n%s\n' "$go" "$v" | sed '/^$/d' | sort -V | tail -1)"
+    v="$(jq -r '.packageManager // empty' "$r/package.json" 2>/dev/null | sed -n 's/^pnpm@\([0-9.]*\).*/\1/p' || true)"
+    [[ -n "$v" ]] && pnpm="$(printf '%s\n%s\n' "$pnpm" "$v" | sed '/^$/d' | sort -V | tail -1)"
+  done
   if [[ ! -f "$cfg/Dockerfile" && ( -n "$go" || -n "$pnpm" ) ]]; then
     {
       echo "# Generated by claude-box init; add whatever else the project needs."
@@ -312,10 +354,37 @@ cmd_init() {
     } > "$cfg/Dockerfile"
     notes="Dockerfile with${go:+ Go $go}${pnpm:+ pnpm $pnpm}"
   fi
-  local compose; compose="$(git -C "$d" ls-files | grep -ciE '(^|/)(docker-)?compose[^/]*\.ya?ml$' || true)"
 
-  echo "Workspace $ws ready at $d${notes:+ ($notes)}."
+  # Multi-repo: a CLAUDE.md on top so Claude knows the layout (each repo's own CLAUDE.md still
+  # applies when it works in that repo). Kept if it exists.
+  if [[ $multi -eq 1 && ! -f "$d/CLAUDE.md" ]]; then
+    {
+      echo "# Workspace: $ws"
+      echo
+      echo "This workspace holds several repositories. Each folder is its own git repo: branch,"
+      echo "commit and open PRs/MRs per repo (gh for GitHub, glab for GitLab)."
+      echo
+      echo "| Folder | Repository |"
+      echo "|---|---|"
+      for url in "${urls[@]}"; do echo "| \`$(basename "$(url_path "$url")")/\` | $(url_host "$url")/$(url_path "$url") |"; done
+      echo
+      echo "Describe here how the repos relate and anything that spans them."
+    } > "$d/CLAUDE.md"
+  fi
+
+  local compose=0 n
+  for r in $repos; do
+    n="$(git -C "$r" ls-files | grep -ciE '(^|/)(docker-)?compose[^/]*\.ya?ml$' || true)"; compose=$((compose + n))
+  done
+
+  echo "Workspace $ws at $d${notes:+ ($notes)}: $(echo "$repos" | grep -c . || true) repo(s) cloned."
   [[ "$compose" -gt 0 ]] && echo "Found $compose docker compose file(s); to allow Docker in the box: claude-box set $ws docker on"
-  [[ -n "$var" && -z "$(keychain "$ws" "$var")" ]] && echo "To push from the box, store a token: copy it, then: claude-box secret $ws $var"
+  for var in $(secret_names "$ws"); do
+    [[ -z "$(keychain "$ws" "$var")" ]] && echo "Missing $var (needed to clone private repos and push): copy a token, then: claude-box secret $ws $var"
+  done
+  if [[ ${#failed[@]} -gt 0 ]]; then
+    echo "Then run this again to clone the rest: claude-box init $ws ${failed[*]}"
+    return 1
+  fi
   echo "Check everything with: claude-box doctor $ws"
 }

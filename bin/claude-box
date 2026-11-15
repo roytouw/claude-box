@@ -3,7 +3,7 @@
 #
 #   claude-box [options] [workspace] [-- <claude args>]
 #   claude-box doctor [workspace]            check your setup (changes nothing)
-#   claude-box init <repo-url> [workspace]   create a workspace: clone over HTTPS, generate .claude-box/
+#   claude-box init [workspace] <repo-url>.. create a workspace (several repos = one workspace)
 #   claude-box secret <workspace> <VAR>      store the clipboard in the Keychain, check it, clear it
 #   claude-box set <workspace> <key> <value> profile | connectors | docker | color | env
 #   claude-box list                          your workspaces

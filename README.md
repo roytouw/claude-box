@@ -11,7 +11,7 @@ Needs [uv](https://docs.astral.sh/uv/) and Docker Desktop. This installs the `cl
 `claude-box-mcp` commands, pinned to a release (update later with `uv tool upgrade claude-box`):
 
 ```sh
-uv tool install git+https://github.com/roytouw/claude-box@v0.2.0
+uv tool install git+https://github.com/roytouw/claude-box@v0.3.0
 ```
 
 Workspaces live in `~/claude-box/workspaces` (override with `CLAUDE_BOX_WORKSPACES`).
@@ -34,7 +34,8 @@ tokens. Secrets go from your clipboard straight into the Keychain; Claude never 
 ```sh
 claude-box doctor                      # checks your system (changes nothing)
 
-claude-box init <repo-url> [name]      # clone over HTTPS, generate .claude-box/ (detects Go, pnpm)
+claude-box init <repo-url> [name]      # one repo: clone over HTTPS, generate .claude-box/ (detects Go, pnpm)
+claude-box init <name> <url> <url>...  # several repos worked on together: one workspace, a folder per repo
 claude-box secret <name> GITLAB_TOKEN  # copy the token first: stores the clipboard, checks it, clears it
 claude-box set <name> docker on        # profile | connectors | docker | color | env
 claude-box doctor <name>               # checks remotes, secrets (against GitHub/GitLab/Jira), image
