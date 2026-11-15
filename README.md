@@ -140,3 +140,9 @@ Work from a clone: `bin/claude-box` runs directly, and the MCP server runs stand
 `claude mcp add claude-box-dev -- uv run --script <clone>/mcp/server.py`. Try an install of your
 checkout with `uv tool install --force .`. Releases are git tags (`v0.1.0`, …) matching the
 version in `pyproject.toml`.
+
+This repo ships its own `.claude-box/` (the `GH_TOKEN` it needs and a terminal color), so you can
+work on claude-box in a claude-box: `claude-box init https://github.com/roytouw/claude-box`, store a
+fine-grained GitHub token for this repo (Contents + Pull requests read/write) with
+`claude-box secret claude-box GH_TOKEN`, then `claude-box claude-box`. Personal settings such as
+`profile` and `connectors` stay out of git: add them to `.git/info/exclude`.
