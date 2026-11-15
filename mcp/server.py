@@ -65,6 +65,17 @@ Typical setup flow:
      for hints such as cloudbuild.yaml or gcloud in the repos). If yes: gcloud=True, and ask for
      the default GCP project to set as env CLOUDSDK_CORE_PROJECT. kubectl and k9s are always in
      the box; nothing to turn on for them.
+   - Git identity (always): the name and email for commits in the box (git_name, git_email).
+     The email must be a verified email on the user's account at the repo host (GitHub/GitLab),
+     often a client address for client work. doctor shows the Mac's git identity; offer it as a
+     suggestion, but ask which email this account uses.
+   - Signed commits: ask whether commits must be signed (show as "Verified"; some clients or
+     protected branches require it). If yes, signing=True (needs git_email). This makes a new
+     SSH key just for this workspace; the result shows the public key (also copied to the
+     clipboard) and where to add it. Tell the user to add it there as a SIGNING key (GitHub:
+     Key type "Signing Key"; GitLab: Usage type "Signing"), which can't be used to push or log
+     in. An agent in the box can sign commits as the user, which is the point; that is why the
+     key is separate per workspace and can be revoked on its own.
 3. For each secret, tell the user exactly which token to create (link and minimal scopes, with an
    expiry), to COPY it and to say when done. NEVER ask the user to paste a secret into the chat.
    Then call store_secret_from_clipboard; it validates the token and clears the clipboard.
@@ -90,7 +101,9 @@ per folder in the workspace's profile. Offer trust_workspace; call it only when 
 since trusting lets the repos' .claude/ settings and hooks run in the box.
 
 Token guidance: GitHub fine-grained token (only the needed repos; Contents + Pull requests
-read/write); GitLab token with read_repository + write_repository (+ api for merge requests);
+read/write; with signing, also account permissions "SSH signing keys" and "Email addresses"
+read-only so doctor can check them); GitLab token with read_repository + write_repository
+(+ api for merge requests, or read_user so doctor can check signing keys and emails);
 Atlassian API token created while signed in as the account used for JIRA_USERNAME.
 """,
 )
@@ -164,6 +177,9 @@ def configure_workspace(
     connectors: bool | None = None,
     docker: bool | None = None,
     gcloud: bool | None = None,
+    git_name: str | None = None,
+    git_email: str | None = None,
+    signing: bool | None = None,
     color: str | None = None,
     env: dict[str, str] | None = None,
 ) -> str:
@@ -177,6 +193,10 @@ def configure_workspace(
       Docker Desktop VM, so only when the project needs Docker).
     gcloud: add the Google Cloud CLI (with the GKE auth plugin) to the box, logged in per
       workspace (off by default). The user then logs in with `claude-box gcloud-login <ws>`.
+    git_name, git_email: git identity for commits in the box. The email must be verified on the
+      user's GitHub/GitLab account.
+    signing: sign commits and tags with an SSH key made for this workspace (off by default;
+      needs git_email). Turning it on returns the public key and where to register it.
     color: terminal background as #RRGGBB while the box runs; pick a dark color so white text
       stays readable (contrast 7:1 or more).
     env: non-secret environment variables, e.g. {"GITLAB_HOST": "gitlab.example.com"}.
@@ -190,6 +210,12 @@ def configure_workspace(
         results.append(run("set", workspace, "docker", "on" if docker else "off"))
     if gcloud is not None:
         results.append(run("set", workspace, "gcloud", "on" if gcloud else "off"))
+    if git_name is not None:
+        results.append(run("set", workspace, "git-name", git_name))
+    if git_email is not None:
+        results.append(run("set", workspace, "git-email", git_email))
+    if signing is not None:  # after git_email: signing needs it
+        results.append(run("set", workspace, "signing", "on" if signing else "off"))
     if color is not None:
         results.append(run("set", workspace, "color", color))
     for key, value in (env or {}).items():

@@ -6,6 +6,7 @@
 #   claude-box init [--own-profile] [workspace] <repo-url>..  create a workspace (several repos = one)
 #   claude-box secret <workspace> <VAR>      store the clipboard in the Keychain, check it, clear it
 #   claude-box set <workspace> <key> <value> profile (name or "own") | connectors | docker | gcloud | color | env
+#                                            | git-name | git-email | signing (on: makes an SSH signing key)
 #   claude-box list                          your workspaces
 #   claude-box profiles                      profiles (Claude homes) and which account is logged in
 #   claude-box trust <workspace>             trust the workspace and its repo folders in its profile
@@ -24,6 +25,9 @@
 #   .claude-box/connectors   "on" enables the Claude account's claude.ai connectors (default: off)
 #   .claude-box/docker       "on" gives the box its own private Docker daemon (default: off)
 #   .claude-box/gcloud       "on" adds the Google Cloud CLI, logged in per workspace (default: off)
+#   .claude-box/git-name     git user.name in the box, e.g. Jane Doe
+#   .claude-box/git-email    git user.email; must be a verified email on your GitHub/GitLab account
+#   .claude-box/signing      "on" signs commits and tags with the workspace's SSH key (default: off)
 #
 # Options:
 #   --chat         start a plain new `claude` chat instead of agent view
@@ -50,7 +54,7 @@ case "${1:-}" in
     [[ $# -eq 1 && "$1" != -* ]] || { echo "usage: claude-box gcloud-login <workspace>" >&2; exit 2; } ;;
 esac
 
-usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,6 +80,7 @@ cfg="$ws_path/.claude-box"
 
 # Project settings: one value per file, so they are trivial to read and diff.
 setting() { [[ -f "$cfg/$1" ]] && head -1 "$cfg/$1" | tr -d "[:space:]" || true; }
+line_setting() { [[ -f "$cfg/$1" ]] && sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}' "$cfg/$1" || true; }   # keeps inner spaces
 gcloud="$(setting gcloud)"; [[ "$gcloud" == "on" ]] || gcloud="off"
 if [[ $gcloud_login -eq 1 && "$gcloud" != "on" ]]; then
   echo "gcloud is off for $ws; turn it on first: claude-box set $ws gcloud on" >&2; exit 2
@@ -141,6 +146,34 @@ fi
 
 [[ "$connectors" == "on" ]] && env_args+=(-e ENABLE_CLAUDEAI_MCP_SERVERS=true)
 
+# --- git identity and commit signing (per workspace) ---------------------------------------------
+# Passed as GIT_CONFIG_* env vars: they act like config for every git command in the box and
+# override anything in the profile's ~/.gitconfig. The signing key is a dedicated SSH key of this
+# workspace (made by `claude-box set <ws> signing on`), kept in the Keychain and written to the
+# container's own /tmp at start, never to the profile's home volume.
+SIGNING_KEY=/tmp/claude-box-signing-key
+git_cfg=(); signing=off
+git_name="$(line_setting git-name)"; git_email="$(line_setting git-email)"
+[[ -n "$git_name" ]] && git_cfg+=(user.name "$git_name")
+[[ -n "$git_email" ]] && git_cfg+=(user.email "$git_email")
+if [[ "$(setting signing)" == "on" ]]; then
+  if key="$(security find-generic-password -s "claude-box/$ws/GIT_SIGNING_KEY" -w 2>/dev/null)" && [[ -n "$key" ]]; then
+    export CLAUDE_BOX_SIGNING_KEY="$key"; env_args+=(-e CLAUDE_BOX_SIGNING_KEY); signing=on
+    git_cfg+=(gpg.format ssh user.signingkey "$SIGNING_KEY" gpg.ssh.allowedSignersFile "$SIGNING_KEY.allowed"
+              commit.gpgsign true tag.gpgsign true)
+  else
+    echo "[claude-box] signing is on but the signing key is missing; run: claude-box set $ws signing on" >&2
+  fi
+  unset key
+fi
+[[ -z "$git_email" ]] && echo "[claude-box] no git identity; set one: claude-box set $ws git-email you@example.com" >&2
+if [[ ${#git_cfg[@]} -gt 0 ]]; then
+  env_args+=(-e "GIT_CONFIG_COUNT=$(( ${#git_cfg[@]} / 2 ))")
+  for ((i = 0; i < ${#git_cfg[@]}; i += 2)); do
+    env_args+=(-e "GIT_CONFIG_KEY_$((i / 2))=${git_cfg[i]}" -e "GIT_CONFIG_VALUE_$((i / 2))=${git_cfg[i + 1]}")
+  done
+fi
+
 if [[ $gcloud_login -eq 1 ]]; then
   # No browser redirect to localhost in a container: gcloud prints a URL, you paste back the code.
   cmd=(gcloud auth login --update-adc --no-launch-browser)
@@ -151,6 +184,15 @@ else
   if [[ $chat -eq 1 ]]; then cmd=(claude); else cmd=(claude agents --cwd "/workspace/$ws"); fi
   [[ -f "$cfg/mcp.json" ]] && cmd+=(--mcp-config "/workspace/$ws/.claude-box/mcp.json")
   cmd+=("${claude_args[@]+"${claude_args[@]}"}")
+fi
+if [[ "$signing" == "on" ]]; then
+  # Write the key (only readable by the agent user) and the allowed-signers file for verifying
+  # locally, drop the key from the environment, then run the real command.
+  cmd=(bash -c 'umask 077
+    printf "%s" "$CLAUDE_BOX_SIGNING_KEY" | base64 -d > "$0"
+    printf "%s namespaces=\"git\" %s\n" "$(git config user.email)" "$(ssh-keygen -y -f "$0")" > "$0.allowed"
+    unset CLAUDE_BOX_SIGNING_KEY
+    exec "$@"' "$SIGNING_KEY" "${cmd[@]}")
 fi
 
 # --- link opener: container xdg-open/$BROWSER -> `open` on the Mac -----------------------------
