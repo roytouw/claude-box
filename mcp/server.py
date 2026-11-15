@@ -64,8 +64,13 @@ Typical setup flow:
 3. For each secret, tell the user exactly which token to create (link and minimal scopes, with an
    expiry), to COPY it and to say when done. NEVER ask the user to paste a secret into the chat.
    Then call store_secret_from_clipboard; it validates the token and clears the clipboard.
-4. Run doctor on the workspace and fix what it reports, then tell the user to start the box with
-   `claude-box <workspace>` (first start on a new profile asks for a Claude login in the box).
+4. Run doctor on the workspace and fix what it reports.
+5. Before the first start, ask whether to trust the workspace and its repo folders in the box
+   (otherwise each repo folder prompts "Workspace not trusted" once, e.g. when sending an agent
+   to it). Explain that trusting lets the repos' .claude/ settings and hooks run in the box, and
+   call trust_workspace only on yes.
+6. Tell the user to start the box with `claude-box <workspace>` (first start on a new profile
+   asks for a Claude login in the box).
 
 When the user says a box doesn't work, run doctor on that workspace (list_workspaces if unsure
 which) and explain the problems and fixes in plain words.
