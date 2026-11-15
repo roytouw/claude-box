@@ -123,7 +123,8 @@ fi
 if [[ $shell -eq 1 ]]; then
   cmd=(bash)
 else
-  if [[ $chat -eq 1 ]]; then cmd=(claude); else cmd=(claude agents); fi
+  # Agent view lists every background session in the profile; show only this workspace's.
+  if [[ $chat -eq 1 ]]; then cmd=(claude); else cmd=(claude agents --cwd "/workspace/$ws"); fi
   [[ -f "$cfg/mcp.json" ]] && cmd+=(--mcp-config "/workspace/$ws/.claude-box/mcp.json")
   cmd+=("${claude_args[@]+"${claude_args[@]}"}")
 fi
