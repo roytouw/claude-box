@@ -11,14 +11,14 @@ Needs [uv](https://docs.astral.sh/uv/) and Docker Desktop. This installs the `cl
 `claude-box-mcp` commands, pinned to a release:
 
 ```sh
-uv tool install git+https://github.com/roytouw/claude-box@v0.4.1
+uv tool install git+https://github.com/roytouw/claude-box@v0.4.2
 ```
 
 To update, install the newer tag over it (`uv tool upgrade` keeps the pinned tag). Check your
 version with `uv tool list`; releases are listed under the repo's tags.
 
 ```sh
-uv tool install --force git+https://github.com/roytouw/claude-box@v0.4.1
+uv tool install --force git+https://github.com/roytouw/claude-box@v0.4.2
 ```
 
 Workspaces live in `~/claude-box/workspaces` (override with `CLAUDE_BOX_WORKSPACES`).
@@ -131,8 +131,8 @@ To shrink that, limit Docker Desktop → Settings → Resources → File sharing
 ## Troubleshooting
 
 **"Workspace not trusted"** when sending an agent to a repo folder: trust is kept per folder in the
-box (not on your Mac), so accept it once inside: `claude-box --shell <workspace>`, then
-`cd <repo> && claude`.
+workspace's profile (not on your Mac). With its boxes closed, run `claude-box trust <workspace>`
+to trust the workspace and all its repo folders at once.
 
 ## Develop
 
