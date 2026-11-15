@@ -5,10 +5,11 @@
 #   claude-box doctor [workspace]            check your setup (changes nothing)
 #   claude-box init [--own-profile] [workspace] <repo-url>..  create a workspace (several repos = one)
 #   claude-box secret <workspace> <VAR>      store the clipboard in the Keychain, check it, clear it
-#   claude-box set <workspace> <key> <value> profile (name or "own") | connectors | docker | color | env
+#   claude-box set <workspace> <key> <value> profile (name or "own") | connectors | docker | gcloud | color | env
 #   claude-box list                          your workspaces
 #   claude-box profiles                      profiles (Claude homes) and which account is logged in
 #   claude-box trust <workspace>             trust the workspace and its repo folders in its profile
+#   claude-box gcloud-login <workspace>      log gcloud in for this workspace only (needs gcloud on)
 #
 # Starts `claude agents` (agent view: your sessions, start or resume background agents).
 #
@@ -22,6 +23,7 @@
 #   .claude-box/profile      profile to use for this workspace, e.g. work (default: private)
 #   .claude-box/connectors   "on" enables the Claude account's claude.ai connectors (default: off)
 #   .claude-box/docker       "on" gives the box its own private Docker daemon (default: off)
+#   .claude-box/gcloud       "on" adds the Google Cloud CLI, logged in per workspace (default: off)
 #
 # Options:
 #   --chat         start a plain new `claude` chat instead of agent view
@@ -36,16 +38,19 @@ BOX_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 BASE_IMAGE="ghcr.io/roytouw/claude-box:base"
 WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
 
+profile=""; shell=0; chat=0; pull=0; ws=""; gcloud_login=0
+claude_args=()
+
 case "${1:-}" in
   doctor|init|set|secret|list|profiles|trust)
     # shellcheck source=../lib/commands.sh
     source "$BOX_DIR/lib/commands.sh"; sub="$1"; shift; "cmd_$sub" "$@"; exit $? ;;
+  gcloud-login)   # a normal start of the workspace's box, running only the gcloud login
+    gcloud_login=1; shift
+    [[ $# -eq 1 && "$1" != -* ]] || { echo "usage: claude-box gcloud-login <workspace>" >&2; exit 2; } ;;
 esac
 
-profile=""; shell=0; chat=0; pull=0; ws=""
-claude_args=()
-
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -68,16 +73,20 @@ ws="${ws:-scratch}"
 
 ws_path="$WS_ROOT/$ws"
 cfg="$ws_path/.claude-box"
-mkdir -p "$ws_path"
 
 # Project settings: one value per file, so they are trivial to read and diff.
 setting() { [[ -f "$cfg/$1" ]] && head -1 "$cfg/$1" | tr -d "[:space:]" || true; }
+gcloud="$(setting gcloud)"; [[ "$gcloud" == "on" ]] || gcloud="off"
+if [[ $gcloud_login -eq 1 && "$gcloud" != "on" ]]; then
+  echo "gcloud is off for $ws; turn it on first: claude-box set $ws gcloud on" >&2; exit 2
+fi
+mkdir -p "$ws_path"
 [[ -z "$profile" ]] && profile="$(setting profile)"
 profile="${profile:-private}"
 [[ "$profile" =~ ^[A-Za-z0-9_-]+$ ]] \
   || { echo "profile must be a plain name, got: $profile" >&2; exit 2; }
 connectors="$(setting connectors)"; [[ "$connectors" == "on" ]] || connectors="off"
-echo "[claude-box] workspace $ws · profile $profile · connectors $connectors" >&2
+echo "[claude-box] workspace $ws · profile $profile · connectors $connectors · gcloud $gcloud" >&2
 
 # --- image -----------------------------------------------------------------------------------
 if [[ $pull -eq 1 ]] || ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
@@ -88,6 +97,17 @@ if [[ -f "$cfg/Dockerfile" ]]; then
   image="claude-box-project-$(echo "$ws" | tr '[:upper:]' '[:lower:]')"
   echo "[claude-box] building project image $image" >&2
   docker build -q -t "$image" "$cfg" >/dev/null
+fi
+# Google Cloud CLI: a layer on top of the workspace's image (cached after the first build).
+gcloud_args=()
+if [[ "$gcloud" == "on" ]]; then
+  gcloud_image="claude-box-gcloud-$(echo "$ws" | tr '[:upper:]' '[:lower:]')"
+  docker image inspect "$gcloud_image" >/dev/null 2>&1 \
+    || echo "[claude-box] adding the Google Cloud CLI to the image (a few minutes, once)" >&2
+  docker build -q --build-arg "BASE=$image" -t "$gcloud_image" "$BOX_DIR/image/gcloud" >/dev/null
+  image="$gcloud_image"
+  # Its login, ADC and kubeconfig live in a volume of this workspace, not in the profile's home.
+  gcloud_args=(-v "claude-box-gcloud-${ws}:/gcloud")
 fi
 
 # --- secrets: Keychain item "claude-box/<workspace>/<VAR>" -> env VAR -------------------------
@@ -121,7 +141,10 @@ fi
 
 [[ "$connectors" == "on" ]] && env_args+=(-e ENABLE_CLAUDEAI_MCP_SERVERS=true)
 
-if [[ $shell -eq 1 ]]; then
+if [[ $gcloud_login -eq 1 ]]; then
+  # No browser redirect to localhost in a container: gcloud prints a URL, you paste back the code.
+  cmd=(gcloud auth login --update-adc --no-launch-browser)
+elif [[ $shell -eq 1 ]]; then
   cmd=(bash)
 else
   # Agent view lists every background session in the profile; show only this workspace's.
@@ -234,6 +257,7 @@ docker run --rm -it --init \
   -e TERM="${TERM:-xterm-256color}" -e COLORTERM="${COLORTERM:-}" \
   "${env_args[@]+"${env_args[@]}"}" \
   "${dind_args[@]+"${dind_args[@]}"}" \
+  "${gcloud_args[@]+"${gcloud_args[@]}"}" \
   -v "claude-box-home-${profile}:/home/agent" \
   -v "$ws_path:/workspace/$ws" "${cfg_ro[@]+"${cfg_ro[@]}"}" -w "/workspace/$ws" \
   "$image" "${cmd[@]}"

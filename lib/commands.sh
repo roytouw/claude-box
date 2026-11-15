@@ -141,8 +141,18 @@ doctor_workspace() {
   echo; echo "Workspace $ws"
   [[ -d "$d" ]] || { bad "$d doesn't exist"; hint "create it: claude-box init <repo-url> $ws"; return; }
   [[ -d "$cfg" ]] && ok ".claude-box/ present" || warn "no .claude-box/: runs on the plain base image without secrets"
-  local p c k; p="$(cfg_value "$ws" profile)"; c="$(cfg_value "$ws" connectors)"; k="$(cfg_value "$ws" docker)"
-  ok "profile ${p:-private} · connectors ${c:-off} · docker ${k:-off}"
+  local p c k g; p="$(cfg_value "$ws" profile)"; c="$(cfg_value "$ws" connectors)"; k="$(cfg_value "$ws" docker)"; g="$(cfg_value "$ws" gcloud)"
+  ok "profile ${p:-private} · connectors ${c:-off} · docker ${k:-off} · gcloud ${g:-off}"
+  if [[ "$g" == on ]]; then
+    # The login lives in the workspace's gcloud volume; read the account without starting gcloud.
+    local acct=""
+    if docker volume inspect "claude-box-gcloud-$ws" >/dev/null 2>&1; then
+      acct="$(docker run --rm -v "claude-box-gcloud-$ws:/gcloud:ro" alpine:3.20 sh -c \
+        'f=/gcloud/configurations/config_default; [ -f "$f" ] && sed -n "s/^account *= *//p" "$f" | head -1' 2>/dev/null || true)"
+    fi
+    if [[ -n "$acct" ]]; then ok "gcloud logged in as $acct"
+    else warn "gcloud isn't logged in for this workspace yet"; hint "claude-box gcloud-login $ws"; fi
+  fi
 
   local repos; repos="$(ws_repos "$ws")"
   [[ -z "$repos" ]] && warn "no git repo found in the workspace"
@@ -206,27 +216,29 @@ cmd_set() {
     profile) [[ "$val" == own ]] && val="$(echo "$ws" | tr -c 'A-Za-z0-9_-\n' '-')"   # its own profile, named after the workspace
              [[ "$val" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "profile must be a plain name (or 'own')" >&2; exit 2; }
              if [[ "$val" == private ]]; then rm -f "$cfg/profile"; else echo "$val" > "$cfg/profile"; fi ;;
-    connectors|docker)
+    connectors|docker|gcloud)
              case "$val" in on) echo on > "$cfg/$key" ;; off) rm -f "$cfg/$key" ;; *) echo "$key must be on or off" >&2; exit 2 ;; esac ;;
     color)   [[ "$val" =~ ^#[0-9A-Fa-f]{6}$ ]] || { echo "color must be #RRGGBB" >&2; exit 2; }
              echo "$val" > "$cfg/color" ;;
     env)     [[ "$val" =~ ^[A-Z_][A-Z0-9_]*=.*$ ]] || { echo "env must be KEY=value" >&2; exit 2; }
              local k="${val%%=*}"; touch "$cfg/env"
              grep -v "^$k=" "$cfg/env" > "$cfg/env.tmp" || true; echo "$val" >> "$cfg/env.tmp"; mv "$cfg/env.tmp" "$cfg/env" ;;
-    *) echo "usage: claude-box set <workspace> profile|connectors|docker|color|env <value>" >&2; exit 2 ;;
+    *) echo "usage: claude-box set <workspace> profile|connectors|docker|gcloud|color|env <value>" >&2; exit 2 ;;
   esac
   echo "$ws: $key = $val"
+  [[ "$key" == gcloud && "$val" == on ]] && echo "Log gcloud in for this workspace with: claude-box gcloud-login $ws"
+  return 0
 }
 
 # --- list -----------------------------------------------------------------------------------------
 cmd_list() {
   [[ -d "$WS_ROOT" ]] || { echo "no workspaces yet ($WS_ROOT)"; return; }
-  printf '%-20s %-10s %-10s %-7s %s\n' WORKSPACE PROFILE CONNECTORS DOCKER SECRETS
+  printf '%-20s %-10s %-10s %-7s %-7s %s\n' WORKSPACE PROFILE CONNECTORS DOCKER GCLOUD SECRETS
   for d in "$WS_ROOT"/*/; do
-    local ws total=0 have=0 p c k; ws="$(basename "$d")"
+    local ws total=0 have=0 p c k g; ws="$(basename "$d")"
     for var in $(secret_names "$ws"); do total=$((total + 1)); [[ -n "$(keychain "$ws" "$var")" ]] && have=$((have + 1)); done
-    p="$(cfg_value "$ws" profile)"; c="$(cfg_value "$ws" connectors)"; k="$(cfg_value "$ws" docker)"
-    printf '%-20s %-10s %-10s %-7s %s\n' "$ws" "${p:-private}" "${c:-off}" "${k:-off}" "$have/$total"
+    p="$(cfg_value "$ws" profile)"; c="$(cfg_value "$ws" connectors)"; k="$(cfg_value "$ws" docker)"; g="$(cfg_value "$ws" gcloud)"
+    printf '%-20s %-10s %-10s %-7s %-7s %s\n' "$ws" "${p:-private}" "${c:-off}" "${k:-off}" "${g:-off}" "$have/$total"
   done
 }
 

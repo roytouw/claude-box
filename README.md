@@ -5,20 +5,23 @@ The container only sees the project folder and its own home volume: no host `~/.
 (plugins, skills, memory), no SSH keys, no git, gh or glab config. Secrets come from your macOS
 Keychain at start-up and are never baked into an image.
 
+The base image has Claude Code, git, gh, glab, uv, the Docker CLI, kubectl and k9s. The Google
+Cloud CLI is opt-in per workspace (see [Google Cloud](#google-cloud-opt-in)).
+
 ## Install
 
 Needs [uv](https://docs.astral.sh/uv/) and Docker Desktop. This installs the `claude-box` and
 `claude-box-mcp` commands, pinned to a release:
 
 ```sh
-uv tool install git+https://github.com/roytouw/claude-box@v0.4.2
+uv tool install git+https://github.com/roytouw/claude-box@v0.5.0
 ```
 
 To update, install the newer tag over it (`uv tool upgrade` keeps the pinned tag). Check your
 version with `uv tool list`; releases are listed under the repo's tags.
 
 ```sh
-uv tool install --force git+https://github.com/roytouw/claude-box@v0.4.2
+uv tool install --force git+https://github.com/roytouw/claude-box@v0.5.0
 ```
 
 Workspaces live in `~/claude-box/workspaces` (override with `CLAUDE_BOX_WORKSPACES`).
@@ -44,7 +47,8 @@ claude-box doctor                      # checks your system (changes nothing)
 claude-box init <repo-url>             # one repo: workspace named after the repo, .claude-box/ generated (Go, pnpm)
 claude-box init <name> <url> <url>...  # repos worked on together: one workspace <name>, a folder per repo (named after it)
 claude-box secret <name> GITLAB_TOKEN  # copy the token first: stores the clipboard, checks it, clears it
-claude-box set <name> docker on        # profile | connectors | docker | color | env
+claude-box set <name> docker on        # profile | connectors | docker | gcloud | color | env
+claude-box gcloud-login <name>         # with gcloud on: log gcloud in for this workspace only
 claude-box doctor <name>               # checks remotes, secrets (against GitHub/GitLab/Jira), image
 claude-box list                        # all workspaces
 claude-box profiles                    # profiles and the Claude account in each
@@ -88,6 +92,7 @@ can't change the repos (see [multi-repo example](examples/multi-repo-github-gitl
   profile      profile to use, e.g. work (--profile overrides it)
   connectors   "on" to allow the Claude account's claude.ai connectors (off by default)
   docker       "on" to give the box its own private Docker daemon (off by default, see below)
+  gcloud       "on" to add the Google Cloud CLI, logged in per workspace (off by default, see below)
   color        terminal background while the box runs, e.g. #6E2A0C
 ```
 
@@ -127,6 +132,23 @@ The daemon runs **privileged** in the Docker Desktop VM. That is a trade-off: an
 abuses it could reach the VM, and the VM can see the folders Docker Desktop shares from your Mac.
 To shrink that, limit Docker Desktop → Settings → Resources → File sharing to `~/claude-box`
 (this also affects other bind mounts you use on the Mac). Only turn it on where you need it.
+
+## Google Cloud (opt-in)
+
+`claude-box set <workspace> gcloud on` adds the Google Cloud CLI and the GKE auth plugin to the
+box (an extra image layer, built once on the next start). Then log in, in a terminal:
+
+```sh
+claude-box gcloud-login <workspace>    # open the printed link, sign in, paste the code back
+claude-box set <workspace> env CLOUDSDK_CORE_PROJECT=my-project   # optional default project
+```
+
+The login (also used as Application Default Credentials) and the kubeconfig live in a Docker
+volume of that workspace (`claude-box-gcloud-<workspace>`), not in the profile, so other
+workspaces never see it. An agent in the box can do whatever that Google account can: use an
+account or project with only the access the work needs. For GKE, run
+`gcloud container clusters get-credentials <cluster>` in the box and kubectl/k9s work. To log
+out, remove the volume: `docker volume rm claude-box-gcloud-<workspace>`.
 
 ## Troubleshooting
 

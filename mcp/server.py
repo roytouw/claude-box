@@ -61,9 +61,19 @@ Typical setup flow:
    - Whether claude.ai connectors (Slack, Jira, ...) of that profile's account should be
      available, whether the project needs Docker (create_workspace reports compose files), and a
      terminal color (dark enough for white text).
+   - Whether the project uses Google Cloud (GCP, GKE, Cloud Run, gcloud in scripts or CI; look
+     for hints such as cloudbuild.yaml or gcloud in the repos). If yes: gcloud=True, and ask for
+     the default GCP project to set as env CLOUDSDK_CORE_PROJECT. kubectl and k9s are always in
+     the box; nothing to turn on for them.
 3. For each secret, tell the user exactly which token to create (link and minimal scopes, with an
    expiry), to COPY it and to say when done. NEVER ask the user to paste a secret into the chat.
    Then call store_secret_from_clipboard; it validates the token and clears the clipboard.
+   gcloud on: there is no token to copy. Tell the user to run `claude-box gcloud-login
+   <workspace>` themselves in a terminal (it is interactive: open the printed link, sign in,
+   paste the code back). The login is kept for that workspace only, and an agent in the box can
+   do whatever that Google account can, so suggest an account or project with only the access
+   the work needs. For GKE, kubectl in the box works after `gcloud container clusters
+   get-credentials <cluster>` there.
 4. Run doctor on the workspace and fix what it reports.
 5. Before the first start, ask whether to trust the workspace and its repo folders in the box
    (otherwise each repo folder prompts "Workspace not trusted" once, e.g. when sending an agent
@@ -117,7 +127,7 @@ def doctor(workspace: str | None = None) -> str:
 
 @mcp.tool()
 def list_workspaces() -> str:
-    """List the user's claude-box workspaces with profile, connectors, docker and secrets status."""
+    """List the user's claude-box workspaces with profile, connectors, docker, gcloud and secrets status."""
     return run("list")
 
 
@@ -153,6 +163,7 @@ def configure_workspace(
     profile: str | None = None,
     connectors: bool | None = None,
     docker: bool | None = None,
+    gcloud: bool | None = None,
     color: str | None = None,
     env: dict[str, str] | None = None,
 ) -> str:
@@ -164,6 +175,8 @@ def configure_workspace(
     connectors: allow the Claude account's claude.ai connectors in the box (off by default).
     docker: give the box its own private Docker daemon (off by default; privileged in the
       Docker Desktop VM, so only when the project needs Docker).
+    gcloud: add the Google Cloud CLI (with the GKE auth plugin) to the box, logged in per
+      workspace (off by default). The user then logs in with `claude-box gcloud-login <ws>`.
     color: terminal background as #RRGGBB while the box runs; pick a dark color so white text
       stays readable (contrast 7:1 or more).
     env: non-secret environment variables, e.g. {"GITLAB_HOST": "gitlab.example.com"}.
@@ -175,6 +188,8 @@ def configure_workspace(
         results.append(run("set", workspace, "connectors", "on" if connectors else "off"))
     if docker is not None:
         results.append(run("set", workspace, "docker", "on" if docker else "off"))
+    if gcloud is not None:
+        results.append(run("set", workspace, "gcloud", "on" if gcloud else "off"))
     if color is not None:
         results.append(run("set", workspace, "color", color))
     for key, value in (env or {}).items():
