@@ -6,6 +6,7 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; DOCTOR_PROBLEMS=$((DOCTOR_PROB
 warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 hint() { printf '      %s\n' "$*"; }
 DOCTOR_PROBLEMS=0
+export GIT_TERMINAL_PROMPT=0   # no git command here may ever wait for input on the terminal
 
 valid_ws()  { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; }
 need_ws()   { valid_ws "${1:-}" || { echo "workspace must be a plain name, got: ${1:-<none>}" >&2; exit 2; }; }
@@ -261,17 +262,30 @@ cmd_profiles() {
 looks_like_url() { [[ "$1" == *://* || "$1" == git@*:* || "$1" =~ ^[A-Za-z0-9.-]+\.[a-z]{2,}/.+ ]]; }
 host_var() { case "$1" in github.com) echo GH_TOKEN ;; *gitlab*) echo GITLAB_TOKEN ;; esac; }
 
+# git against a remote: only the workspace token (never the Mac's credential helpers) and never a
+# prompt, so a missing token fails fast instead of waiting for input on the user's terminal.
+git_remote() {  # $1 dir, $2 user, $3 token, rest: git args
+  local dir="$1" user="$2" tok="$3"; shift 3
+  CB_USER="$user" CB_TOKEN="$tok" GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/false SSH_ASKPASS=/usr/bin/false \
+    git -C "$dir" -c credential.helper= \
+      -c 'credential.helper=!f() { test "$1" = get && [ -n "$CB_TOKEN" ] && printf "username=%s\npassword=%s\n" "$CB_USER" "$CB_TOKEN"; }; f' \
+      "$@" </dev/null
+}
+
 clone_into() {  # $1 dir, $2 https url, $3 workspace
   local dir="$1" url="$2" ws="$3" var tok="" user=x-access-token head
   var="$(host_var "$(url_host "$url")")"; [[ "$var" == GITLAB_TOKEN ]] && user=oauth2
   [[ -n "$var" ]] && tok="$(keychain "$ws" "$var")"
   mkdir -p "$dir"; git -C "$dir" init -q
   git -C "$dir" remote add origin "$url" 2>/dev/null || git -C "$dir" remote set-url origin "$url"
-  if CB_USER="$user" CB_TOKEN="$tok" GIT_TERMINAL_PROMPT=0 git -C "$dir" \
-       -c credential.helper= -c 'credential.helper=!f() { test "$1" = get && [ -n "$CB_TOKEN" ] && printf "username=%s\npassword=%s\n" "$CB_USER" "$CB_TOKEN"; }; f' \
-       fetch -q origin 2>/dev/null; then
-    git -C "$dir" remote set-head origin -a >/dev/null 2>&1 || true
-    head="$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)"
+  if git_remote "$dir" "$user" "$tok" fetch -q origin 2>/dev/null; then
+    git_remote "$dir" "$user" "$tok" remote set-head origin -a >/dev/null 2>&1 || true
+    head="$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    if [[ -z "$head" ]]; then  # default branch unknown: main, master, or the first remote branch
+      for head in origin/main origin/master $(git -C "$dir" for-each-ref --format='%(refname:short)' refs/remotes/origin | head -1); do
+        git -C "$dir" rev-parse -q --verify "$head" >/dev/null && break
+      done
+    fi
     git -C "$dir" checkout -q -B "${head#origin/}" "$head"
   else
     rm -rf "$dir/.git"; rmdir "$dir" 2>/dev/null || true
