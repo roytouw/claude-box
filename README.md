@@ -121,6 +121,12 @@ abuses it could reach the VM, and the VM can see the folders Docker Desktop shar
 To shrink that, limit Docker Desktop → Settings → Resources → File sharing to `~/claude-box`
 (this also affects other bind mounts you use on the Mac). Only turn it on where you need it.
 
+## Troubleshooting
+
+**"Workspace not trusted"** when sending an agent to a repo folder: trust is kept per folder in the
+box (not on your Mac), so accept it once inside: `claude-box --shell <workspace>`, then
+`cd <repo> && claude`.
+
 ## Develop
 
 Work from a clone: `bin/claude-box` runs directly, and the MCP server runs standalone with
