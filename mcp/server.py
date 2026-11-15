@@ -52,9 +52,12 @@ Typical setup flow:
 2. Ask the user what matters, then configure_workspace:
    - Profile: call list_profiles first. A profile is just a named Claude home; its name says
      nothing about which account is in it (a profile called "private" can hold a work login).
-     Offer the existing profiles as they are, with the login list_profiles reports, plus "a new
-     profile" under a name the user picks. Don't guess which one is work or private, and don't
-     invent names. A new profile asks for a Claude login on the box's first start.
+     Sharing a profile is the default: workspaces on one profile share its plugins, memory,
+     history and agent list. Offer the existing profiles as they are, with the login
+     list_profiles reports, and as an opt-in "its own profile for just this workspace"
+     (profile "own", named after the workspace; it can use the same Claude account), or a new
+     profile under a name the user picks. Don't guess which one is work or private, and don't
+     invent names. A new or own profile asks for a Claude login on the box's first start.
    - Whether claude.ai connectors (Slack, Jira, ...) of that profile's account should be
      available, whether the project needs Docker (create_workspace reports compose files), and a
      terminal color (dark enough for white text).
@@ -119,7 +122,7 @@ def list_profiles() -> str:
 
 
 @mcp.tool()
-def create_workspace(repo_urls: list[str], name: str | None = None) -> str:
+def create_workspace(repo_urls: list[str], name: str | None = None, own_profile: bool = False) -> str:
     """Create a workspace in ~/claude-box/workspaces/<name> with one or more repos, cloned over HTTPS.
 
     Repo folders are always named after the repository. One repo and no name: the workspace is
@@ -129,8 +132,10 @@ def create_workspace(repo_urls: list[str], name: str | None = None) -> str:
     Dockerfile with the Go/pnpm versions found and lists the tokens needed per host (GH_TOKEN for
     GitHub, GITLAB_TOKEN for GitLab). Safe to call again: after storing a token for private repos,
     or with an existing multi-repo workspace's name to add repos. SSH URLs are converted to HTTPS.
+    own_profile: opt-in; give the workspace its own profile named after it (separate plugins,
+    memory, history and agents) instead of sharing the default one. Only when the user chose it.
     """
-    return run("init", *([name] if name else []), *repo_urls)
+    return run("init", *(["--own-profile"] if own_profile else []), *([name] if name else []), *repo_urls)
 
 
 @mcp.tool()
@@ -144,8 +149,9 @@ def configure_workspace(
 ) -> str:
     """Change workspace settings. Only the given settings change.
 
-    profile: name of the Claude home to use: an existing one from list_profiles, or a new name
-      the user chose (a new profile asks for a Claude login on first start). Default "private".
+    profile: name of the Claude home to use: an existing one from list_profiles, "own" for a
+      profile of its own named after the workspace (opt-in), or a new name the user chose (a new
+      profile asks for a Claude login on first start). Default "private", shared.
     connectors: allow the Claude account's claude.ai connectors in the box (off by default).
     docker: give the box its own private Docker daemon (off by default; privileged in the
       Docker Desktop VM, so only when the project needs Docker).
