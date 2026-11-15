@@ -11,14 +11,14 @@ Needs [uv](https://docs.astral.sh/uv/) and Docker Desktop. This installs the `cl
 `claude-box-mcp` commands, pinned to a release:
 
 ```sh
-uv tool install git+https://github.com/roytouw/claude-box@v0.3.2
+uv tool install git+https://github.com/roytouw/claude-box@v0.4.0
 ```
 
 To update, install the newer tag over it (`uv tool upgrade` keeps the pinned tag). Check your
 version with `uv tool list`; releases are listed under the repo's tags.
 
 ```sh
-uv tool install --force git+https://github.com/roytouw/claude-box@v0.3.2
+uv tool install --force git+https://github.com/roytouw/claude-box@v0.4.0
 ```
 
 Workspaces live in `~/claude-box/workspaces` (override with `CLAUDE_BOX_WORKSPACES`).
@@ -69,6 +69,10 @@ claude-box myproject                 # profile "private"
 claude-box --profile acme teamstuff  # profile "acme", asks for a Claude login the first time
 claude-box profiles                  # which account each profile is logged in to
 ```
+
+Workspaces on one profile share its plugins, memory and history. To keep a workspace apart
+(opt-in), give it its own profile, named after it; the same Claude account works fine:
+`claude-box init --own-profile …` or `claude-box set <workspace> profile own`.
 
 ## Configure a workspace
 

@@ -203,7 +203,8 @@ cmd_set() {
   [[ -d "$WS_ROOT/$ws" ]] || { echo "workspace $ws doesn't exist" >&2; exit 2; }
   local cfg; cfg="$(ws_cfg "$ws")"; mkdir -p "$cfg"
   case "$key" in
-    profile) [[ "$val" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "profile must be a plain name" >&2; exit 2; }
+    profile) [[ "$val" == own ]] && val="$(echo "$ws" | tr -c 'A-Za-z0-9_-\n' '-')"   # its own profile, named after the workspace
+             [[ "$val" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "profile must be a plain name (or 'own')" >&2; exit 2; }
              if [[ "$val" == private ]]; then rm -f "$cfg/profile"; else echo "$val" > "$cfg/profile"; fi ;;
     connectors|docker)
              case "$val" in on) echo on > "$cfg/$key" ;; off) rm -f "$cfg/$key" ;; *) echo "$key must be on or off" >&2; exit 2 ;; esac ;;
@@ -294,11 +295,12 @@ clone_into() {  # $1 dir, $2 https url, $3 workspace
 }
 
 cmd_init() {
-  local ws="" urls=() a named=0
+  local ws="" urls=() a named=0 own=0
   for a in "$@"; do
-    if looks_like_url "$a"; then urls+=("$(https_url "$a")")
+    if [[ "$a" == --own-profile ]]; then own=1
+    elif looks_like_url "$a"; then urls+=("$(https_url "$a")")
     elif [[ -z "$ws" ]]; then ws="$a"
-    else echo "usage: claude-box init [workspace] <repo-url>..." >&2; exit 2; fi
+    else echo "usage: claude-box init [--own-profile] [workspace] <repo-url>..." >&2; exit 2; fi
   done
   [[ ${#urls[@]} -gt 0 ]] || { echo "usage: claude-box init [workspace] <repo-url>...   (several repos = one workspace)" >&2; exit 2; }
   local repo1; repo1="$(basename "$(url_path "${urls[0]}")")"
@@ -403,6 +405,10 @@ cmd_init() {
   done
 
   echo "Workspace $ws at $d${notes:+ ($notes)}: $(echo "$repos" | grep -c . || true) repo(s) cloned."
+  if [[ $own -eq 1 ]]; then
+    cmd_set "$ws" profile own >/dev/null
+    echo "Own profile: $(cfg_value "$ws" profile) (separate plugins, memory and history; asks for a Claude login on first start)"
+  fi
   [[ "$compose" -gt 0 ]] && echo "Found $compose docker compose file(s); to allow Docker in the box: claude-box set $ws docker on"
   for var in $(secret_names "$ws"); do
     [[ -z "$(keychain "$ws" "$var")" ]] && echo "Missing $var (needed to clone private repos and push): copy a token, then: claude-box secret $ws $var"

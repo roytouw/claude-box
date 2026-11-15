@@ -3,9 +3,9 @@
 #
 #   claude-box [options] [workspace] [-- <claude args>]
 #   claude-box doctor [workspace]            check your setup (changes nothing)
-#   claude-box init [workspace] <repo-url>.. create a workspace (several repos = one workspace)
+#   claude-box init [--own-profile] [workspace] <repo-url>..  create a workspace (several repos = one)
 #   claude-box secret <workspace> <VAR>      store the clipboard in the Keychain, check it, clear it
-#   claude-box set <workspace> <key> <value> profile | connectors | docker | color | env
+#   claude-box set <workspace> <key> <value> profile (name or "own") | connectors | docker | color | env
 #   claude-box list                          your workspaces
 #   claude-box profiles                      profiles (Claude homes) and which account is logged in
 #
