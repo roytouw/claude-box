@@ -230,6 +230,29 @@ cmd_list() {
   done
 }
 
+# --- trust: accept Claude's folder trust prompt for a workspace and its repos, in its profile ------
+# Trust is kept per folder in the profile's ~/.claude.json, so each repo folder (and each profile)
+# would otherwise prompt once. This is an explicit command: trusting lets a repo's .claude/
+# settings and hooks run inside the box.
+cmd_trust() {
+  local ws="${1:-}"; need_ws "$ws"
+  local d="$WS_ROOT/$ws"; [[ -d "$d" ]] || { echo "workspace $ws doesn't exist" >&2; exit 2; }
+  local p; p="$(cfg_value "$ws" profile)"; p="${p:-private}"
+  local paths=("/workspace/$ws") r
+  for r in $(ws_repos "$ws"); do [[ "$r" != "$d" ]] && paths+=("/workspace/$ws/${r#"$d/"}"); done
+  if docker ps --format '{{.Names}}' | grep -q "^claude-box-$p-"; then
+    echo "Close the running boxes on profile $p first (Claude rewrites its settings while running):" >&2
+    docker ps --format '  {{.Names}}' | grep "claude-box-$p-" >&2
+    exit 1
+  fi
+  local img="$BASE_IMAGE"; docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null
+  docker run --rm -v "claude-box-home-$p:/home/agent" "$img" bash -c '
+    f=/home/agent/.claude.json; [ -s "$f" ] || echo "{}" > "$f"
+    jq --args "reduce \$ARGS.positional[] as \$p (.; .projects[\$p].hasTrustDialogAccepted = true)" "$@" < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  ' _ "${paths[@]}"
+  echo "Trusted in profile $p:"; printf '  %s\n' "${paths[@]}"
+}
+
 # --- profiles: which Claude homes exist and who is logged in --------------------------------------
 # Shows only the organization and the email domain of a login, never the full address or tokens.
 cmd_profiles() {

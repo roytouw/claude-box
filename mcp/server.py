@@ -70,6 +70,10 @@ Typical setup flow:
 When the user says a box doesn't work, run doctor on that workspace (list_workspaces if unsure
 which) and explain the problems and fixes in plain words.
 
+"Workspace not trusted" in a box (e.g. when sending an agent to a repo folder): trust is kept
+per folder in the workspace's profile. Offer trust_workspace; call it only when the user agrees,
+since trusting lets the repos' .claude/ settings and hooks run in the box.
+
 Token guidance: GitHub fine-grained token (only the needed repos; Contents + Pull requests
 read/write); GitLab token with read_repository + write_repository (+ api for merge requests);
 Atlassian API token created while signed in as the account used for JIRA_USERNAME.
@@ -171,6 +175,15 @@ def configure_workspace(
     for key, value in (env or {}).items():
         results.append(run("set", workspace, "env", f"{key}={value}"))
     return "\n".join(results) or "Nothing to change."
+
+
+@mcp.tool()
+def trust_workspace(workspace: str) -> str:
+    """Accept Claude's folder trust prompt for a workspace and its repo folders, in the workspace's
+    profile, so agents can be sent to the repo folders without "Workspace not trusted". Only call
+    it when the user agreed. Boxes on that profile must be closed first; the result says so.
+    """
+    return run("trust", workspace)
 
 
 @mcp.tool()
