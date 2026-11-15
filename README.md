@@ -34,8 +34,8 @@ tokens. Secrets go from your clipboard straight into the Keychain; Claude never 
 ```sh
 claude-box doctor                      # checks your system (changes nothing)
 
-claude-box init <repo-url> [name]      # one repo: clone over HTTPS, generate .claude-box/ (detects Go, pnpm)
-claude-box init <name> <url> <url>...  # several repos worked on together: one workspace, a folder per repo
+claude-box init <repo-url>             # one repo: workspace named after the repo, .claude-box/ generated (Go, pnpm)
+claude-box init <name> <url> <url>...  # repos worked on together: one workspace <name>, a folder per repo (named after it)
 claude-box secret <name> GITLAB_TOKEN  # copy the token first: stores the clipboard, checks it, clears it
 claude-box set <name> docker on        # profile | connectors | docker | color | env
 claude-box doctor <name>               # checks remotes, secrets (against GitHub/GitLab/Jira), image

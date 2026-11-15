@@ -280,22 +280,26 @@ clone_into() {  # $1 dir, $2 https url, $3 workspace
 }
 
 cmd_init() {
-  local ws="" urls=() a
+  local ws="" urls=() a named=0
   for a in "$@"; do
     if looks_like_url "$a"; then urls+=("$(https_url "$a")")
     elif [[ -z "$ws" ]]; then ws="$a"
     else echo "usage: claude-box init [workspace] <repo-url>..." >&2; exit 2; fi
   done
   [[ ${#urls[@]} -gt 0 ]] || { echo "usage: claude-box init [workspace] <repo-url>...   (several repos = one workspace)" >&2; exit 2; }
+  local repo1; repo1="$(basename "$(url_path "${urls[0]}")")"
   if [[ -z "$ws" ]]; then
     [[ ${#urls[@]} -eq 1 ]] || { echo "name the workspace when it holds several repos: claude-box init <name> <url> <url>..." >&2; exit 2; }
-    ws="$(basename "$(url_path "${urls[0]}")")"
+    ws="$repo1"
+  else
+    named=1
   fi
   need_ws "$ws"
   local d="$WS_ROOT/$ws" cfg; cfg="$(ws_cfg "$ws")"
 
-  # Layout: a single-repo workspace stays single; several repos (or an existing multi-repo
-  # workspace) means one subfolder per repo.
+  # Layout. A repo's folder is always named after the repo. One repo without a custom name: the
+  # workspace is that repo. Several repos, a custom name, or an existing multi-repo workspace: a
+  # folder per repo inside the workspace.
   local multi=0
   if [[ -d "$d/.git" ]]; then
     local top; top="$(git -C "$d" remote get-url origin 2>/dev/null || true)"
@@ -304,7 +308,7 @@ cmd_init() {
       echo "create a new workspace with all of them: claude-box init <name> <url> <url>..." >&2
       exit 2
     fi
-  elif [[ ${#urls[@]} -gt 1 || -n "$(ws_repos "$ws")" || -f "$d/CLAUDE.md" ]]; then
+  elif [[ ${#urls[@]} -gt 1 || ( $named -eq 1 && "$ws" != "$repo1" ) || -n "$(ws_repos "$ws")" || -f "$d/CLAUDE.md" ]]; then
     multi=1
   fi
   mkdir -p "$cfg"
@@ -321,10 +325,17 @@ cmd_init() {
     fi
   done
 
-  local failed=() dir
+  local failed=() clashes=0 dir have
   for url in "${urls[@]}"; do
     if [[ $multi -eq 1 ]]; then dir="$d/$(basename "$(url_path "$url")")"; else dir="$d"; fi
-    [[ -d "$dir/.git" ]] && continue
+    if [[ -d "$dir/.git" ]]; then
+      have="$(https_url "$(git -C "$dir" remote get-url origin 2>/dev/null || true)")"
+      if [[ "${have%.git}" != "${url%.git}" ]]; then
+        echo "Not cloning $url: folder $dir already holds $have (two repos with the same name)."
+        clashes=$((clashes + 1))
+      fi
+      continue
+    fi
     if clone_into "$dir" "$url" "$ws"; then echo "Cloned $(url_path "$url") into $dir"
     else failed+=("$url"); echo "Couldn't clone $url yet (private repo?)."; fi
   done
@@ -386,5 +397,6 @@ cmd_init() {
     echo "Then run this again to clone the rest: claude-box init $ws ${failed[*]}"
     return 1
   fi
+  [[ $clashes -gt 0 ]] && return 1
   echo "Check everything with: claude-box doctor $ws"
 }
