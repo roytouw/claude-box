@@ -75,11 +75,19 @@ Atlassian API token created while signed in as the account used for JIRA_USERNAM
 
 
 def run(*args: str) -> str:
-    """Run the claude-box CLI and return its output (without colors) plus the exit status."""
-    proc = subprocess.run(
-        ["/bin/bash", str(CLI), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900,
-        env={**os.environ, "CLAUDE_BOX_VIA_MCP": "1"},
-    )
+    """Run the claude-box CLI and return its output (without colors) plus the exit status.
+
+    It runs in its own session without a controlling terminal, so nothing it starts (git, docker,
+    security) can ever read from or wait on the user's Claude terminal.
+    """
+    try:
+        proc = subprocess.run(
+            ["/bin/bash", str(CLI), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+            timeout=900, start_new_session=True,
+            env={**os.environ, "CLAUDE_BOX_VIA_MCP": "1", "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except subprocess.TimeoutExpired:
+        return f"claude-box {' '.join(args[:1])} took longer than 15 minutes and was stopped."
     out = ANSI.sub("", (proc.stdout + proc.stderr).strip())
     return out + ("" if proc.returncode == 0 else f"\n(exit status {proc.returncode})")
 
