@@ -228,6 +228,31 @@ cmd_list() {
   done
 }
 
+# --- profiles: which Claude homes exist and who is logged in --------------------------------------
+# Shows only the organization and the email domain of a login, never the full address or tokens.
+cmd_profiles() {
+  local vols; vols="$(docker volume ls --format '{{.Name}}' 2>/dev/null | sed -n 's/^claude-box-home-//p')"
+  if [[ -z "$vols" ]]; then
+    echo "No profiles yet. A profile is created on the first start of a workspace that uses it;"
+    echo "that start asks you to log in with the Claude account you want for it."
+    return
+  fi
+  local img="$BASE_IMAGE"; docker image inspect "$img" >/dev/null 2>&1 || img="alpine:3.20"
+  printf '%-14s %-44s %s\n' PROFILE LOGIN WORKSPACES
+  for p in $vols; do
+    local login used=""
+    login="$(docker run --rm -v "claude-box-home-$p:/home/agent:ro" "$img" sh -c \
+      'f=/home/agent/.claude.json; [ -f "$f" ] && command -v jq >/dev/null && jq -r ".oauthAccount // empty | \"\(.organizationName // \"?\") (@\(.emailAddress // \"?\" | split(\"@\")[1] // \"?\"))\"" "$f"' 2>/dev/null || true)"
+    if [[ -d "$WS_ROOT" ]]; then
+      for d in "$WS_ROOT"/*/; do
+        local ws wp; ws="$(basename "$d")"; wp="$(cfg_value "$ws" profile)"
+        [[ "${wp:-private}" == "$p" ]] && used="$used${used:+, }$ws"
+      done
+    fi
+    printf '%-14s %-44s %s\n' "$p" "${login:-not logged in yet}" "${used:--}"
+  done
+}
+
 # --- init: workspace + clone (HTTPS) + generated .claude-box/; safe to run again ------------------
 cmd_init() {
   local url="${1:-}" ws="${2:-}"
