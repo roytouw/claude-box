@@ -8,10 +8,17 @@ Keychain at start-up and are never baked into an image.
 ## Install
 
 Needs [uv](https://docs.astral.sh/uv/) and Docker Desktop. This installs the `claude-box` and
-`claude-box-mcp` commands, pinned to a release (update later with `uv tool upgrade claude-box`):
+`claude-box-mcp` commands, pinned to a release:
 
 ```sh
 uv tool install git+https://github.com/roytouw/claude-box@v0.2.0
+```
+
+To update, install the newer tag over it (`uv tool upgrade` keeps the pinned tag). Check your
+version with `uv tool list`; releases are listed under the repo's tags.
+
+```sh
+uv tool install --force git+https://github.com/roytouw/claude-box@v0.2.0
 ```
 
 Workspaces live in `~/claude-box/workspaces` (override with `CLAUDE_BOX_WORKSPACES`).
