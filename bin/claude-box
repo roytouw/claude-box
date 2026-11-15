@@ -171,6 +171,12 @@ if [[ -n "$tty_out" ]]; then
   fi
 fi
 
+# The workspace's own config is read-only inside the box (and its Docker daemon): an agent must not
+# be able to turn on docker/connectors, add secrets or change the image for the next start.
+# Changes come from the host (claude-box set/secret/init or the MCP server).
+cfg_ro=()
+[[ -d "$cfg" ]] && cfg_ro=(-v "$cfg:/workspace/$ws/.claude-box:ro")
+
 # --- optional Docker: a private daemon per workspace (.claude-box/docker = on) -------------------
 # Never the host's Docker Desktop socket: that would let the box mount your whole home folder.
 # The daemon runs privileged in its own container, sees only the workspace (at the same path, so
@@ -188,7 +194,7 @@ if [[ "$(setting docker)" == "on" ]]; then
     docker run -d --privileged --name "$dind_name" \
       -v "claude-box-dind-${ws}:/var/lib/docker" \
       -v "claude-box-dind-run-${ws}:/run/dind" \
-      -v "$ws_path:/workspace/$ws" \
+      -v "$ws_path:/workspace/$ws" "${cfg_ro[@]+"${cfg_ro[@]}"}" \
       "$DIND_IMAGE" dockerd --host=unix:///run/dind/docker.sock --group=1000 >/dev/null
   fi
   for _ in $(seq 1 60); do
@@ -228,5 +234,5 @@ docker run --rm -it --init \
   "${env_args[@]+"${env_args[@]}"}" \
   "${dind_args[@]+"${dind_args[@]}"}" \
   -v "claude-box-home-${profile}:/home/agent" \
-  -v "$ws_path:/workspace/$ws" -w "/workspace/$ws" \
+  -v "$ws_path:/workspace/$ws" "${cfg_ro[@]+"${cfg_ro[@]}"}" -w "/workspace/$ws" \
   "$image" "${cmd[@]}"

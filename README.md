@@ -11,14 +11,14 @@ Needs [uv](https://docs.astral.sh/uv/) and Docker Desktop. This installs the `cl
 `claude-box-mcp` commands, pinned to a release:
 
 ```sh
-uv tool install git+https://github.com/roytouw/claude-box@v0.4.0
+uv tool install git+https://github.com/roytouw/claude-box@v0.4.1
 ```
 
 To update, install the newer tag over it (`uv tool upgrade` keeps the pinned tag). Check your
 version with `uv tool list`; releases are listed under the repo's tags.
 
 ```sh
-uv tool install --force git+https://github.com/roytouw/claude-box@v0.4.0
+uv tool install --force git+https://github.com/roytouw/claude-box@v0.4.1
 ```
 
 Workspaces live in `~/claude-box/workspaces` (override with `CLAUDE_BOX_WORKSPACES`).
@@ -90,6 +90,9 @@ can't change the repos (see [multi-repo example](examples/multi-repo-github-gitl
   docker       "on" to give the box its own private Docker daemon (off by default, see below)
   color        terminal background while the box runs, e.g. #6E2A0C
 ```
+
+Inside the box `.claude-box/` is read-only, so an agent can't change its own settings, secrets or
+image; change them on the host with `claude-box set`/`secret` or the MCP server.
 
 Store each secret once in your Keychain: copy it, then run `claude-box secret <workspace> <VAR>`.
 It refuses obvious mistakes (a copied command, whitespace, a truncated token), checks the token
