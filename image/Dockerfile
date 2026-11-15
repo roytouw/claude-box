@@ -51,10 +51,12 @@ RUN chmod 0755 /usr/local/bin/box-git-credential \
 
 # gh and glab keep no logins in the persistent home: they only work with a token the project
 # provides. claude.ai connectors are off unless a project opts in (.claude-box/connectors).
+# Claude Code itself is updated by rebuilding the image; plugins still auto-update.
 ENV BROWSER=/usr/local/bin/box-open \
     GH_CONFIG_DIR=/tmp/gh \
     GLAB_CONFIG_DIR=/tmp/glab \
     DISABLE_AUTOUPDATER=1 \
+    FORCE_AUTOUPDATE_PLUGINS=1 \
     ENABLE_CLAUDEAI_MCP_SERVERS=false
 
 USER agent
