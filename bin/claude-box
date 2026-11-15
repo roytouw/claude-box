@@ -7,6 +7,7 @@
 #   claude-box secret <workspace> <VAR>      store the clipboard in the Keychain, check it, clear it
 #   claude-box set <workspace> <key> <value> profile | connectors | docker | color | env
 #   claude-box list                          your workspaces
+#   claude-box profiles                      profiles (Claude homes) and which account is logged in
 #
 # Starts `claude agents` (agent view: your sessions, start or resume background agents).
 #
@@ -35,7 +36,7 @@ BASE_IMAGE="ghcr.io/roytouw/claude-box:base"
 WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
 
 case "${1:-}" in
-  doctor|init|set|secret|list)
+  doctor|init|set|secret|list|profiles)
     # shellcheck source=../lib/commands.sh
     source "$BOX_DIR/lib/commands.sh"; sub="$1"; shift; "cmd_$sub" "$@"; exit $? ;;
 esac
@@ -43,7 +44,7 @@ esac
 profile=""; shell=0; chat=0; pull=0; ws=""
 claude_args=()
 
-usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

@@ -11,7 +11,7 @@ Needs [uv](https://docs.astral.sh/uv/) and Docker Desktop. This installs the `cl
 `claude-box-mcp` commands, pinned to a release (update later with `uv tool upgrade claude-box`):
 
 ```sh
-uv tool install git+https://github.com/roytouw/claude-box@v0.1.0
+uv tool install git+https://github.com/roytouw/claude-box@v0.2.0
 ```
 
 Workspaces live in `~/claude-box/workspaces` (override with `CLAUDE_BOX_WORKSPACES`).
@@ -39,6 +39,7 @@ claude-box secret <name> GITLAB_TOKEN  # copy the token first: stores the clipbo
 claude-box set <name> docker on        # profile | connectors | docker | color | env
 claude-box doctor <name>               # checks remotes, secrets (against GitHub/GitLab/Jira), image
 claude-box list                        # all workspaces
+claude-box profiles                    # profiles and the Claude account in each
 ```
 
 ## Use
@@ -51,12 +52,14 @@ claude-box --shell myproject   # bash instead
 
 Edit the code with any IDE on the host; the folder is mounted into the container.
 
-**Profiles** keep accounts apart. Each profile is its own Docker volume with its own Claude login,
-plugins and memory (`private` by default). Run two side by side, e.g. a private and a work account:
+**Profiles** keep accounts apart. A profile is a named Docker volume with its own Claude login,
+plugins and memory (`private` by default). The name is only a label: the account is whatever you
+log in with on its first start. Run two side by side with different accounts:
 
 ```sh
 claude-box myproject                 # profile "private"
-claude-box --profile work teamstuff  # profile "work", logs in separately the first time
+claude-box --profile acme teamstuff  # profile "acme", asks for a Claude login the first time
+claude-box profiles                  # which account each profile is logged in to
 ```
 
 ## Configure a workspace

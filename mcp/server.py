@@ -40,10 +40,15 @@ Typical setup flow:
    in the start command at the end. Don't run commands on their machine for them.
 1. create_workspace with the repo URL. If cloning fails because the repo is private, the user
    needs a token first (step 3), then call create_workspace again.
-2. Ask the user what matters, then configure_workspace: which profile (their private Claude
-   account, or a separate one such as "work"), whether claude.ai connectors (Slack, Jira, ...)
-   should be available, whether the project needs Docker (create_workspace reports compose
-   files), and a terminal color (dark enough for white text).
+2. Ask the user what matters, then configure_workspace:
+   - Profile: call list_profiles first. A profile is just a named Claude home; its name says
+     nothing about which account is in it (a profile called "private" can hold a work login).
+     Offer the existing profiles as they are, with the login list_profiles reports, plus "a new
+     profile" under a name the user picks. Don't guess which one is work or private, and don't
+     invent names. A new profile asks for a Claude login on the box's first start.
+   - Whether claude.ai connectors (Slack, Jira, ...) of that profile's account should be
+     available, whether the project needs Docker (create_workspace reports compose files), and a
+     terminal color (dark enough for white text).
 3. For each secret, tell the user exactly which token to create (link and minimal scopes, with an
    expiry), to COPY it and to say when done. NEVER ask the user to paste a secret into the chat.
    Then call store_secret_from_clipboard; it validates the token and clears the clipboard.
@@ -88,6 +93,15 @@ def list_workspaces() -> str:
 
 
 @mcp.tool()
+def list_profiles() -> str:
+    """List the user's claude-box profiles (named Claude homes), which Claude account is logged in
+    to each (organization and email domain only) and which workspaces use them. Use it before
+    asking which profile a workspace should use; profile names don't tell which account they hold.
+    """
+    return run("profiles")
+
+
+@mcp.tool()
 def create_workspace(repo_url: str, name: str | None = None) -> str:
     """Create a workspace for a repo: clone it over HTTPS into ~/claude-box/workspaces/<name>,
     generate .claude-box/ (Dockerfile with detected Go/pnpm versions, required token names) and keep
@@ -108,7 +122,8 @@ def configure_workspace(
 ) -> str:
     """Change workspace settings. Only the given settings change.
 
-    profile: which Claude account/home to use ("private" by default, e.g. "work").
+    profile: name of the Claude home to use: an existing one from list_profiles, or a new name
+      the user chose (a new profile asks for a Claude login on first start). Default "private".
     connectors: allow the Claude account's claude.ai connectors in the box (off by default).
     docker: give the box its own private Docker daemon (off by default; privileged in the
       Docker Desktop VM, so only when the project needs Docker).
