@@ -12,6 +12,7 @@ valid_ws()  { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; }
 need_ws()   { valid_ws "${1:-}" || { echo "workspace must be a plain name, got: ${1:-<none>}" >&2; exit 2; }; }
 ws_cfg()    { echo "$WS_ROOT/$1/.claude-box"; }
 cfg_value() { local f; f="$(ws_cfg "$1")/$2"; [[ -f "$f" ]] && head -1 "$f" | tr -d '[:space:]' || true; }
+cfg_line()  { local f; f="$(ws_cfg "$1")/$2"; [[ -f "$f" ]] && sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}' "$f" || true; }   # keeps inner spaces
 env_value() { local f; f="$(ws_cfg "$1")/env"; [[ -f "$f" ]] && sed -n "s/^$2=//p" "$f" | head -1 || true; }
 keychain()  { security find-generic-password -s "claude-box/$1/$2" -w 2>/dev/null || true; }
 secret_names() {
@@ -133,6 +134,8 @@ doctor_system() {
       else hint "claude mcp add claude-box -- uv run --script $BOX_DIR/mcp/server.py"; fi
     fi
   fi
+  local hn he; hn="$(git config --global user.name 2>/dev/null || true)"; he="$(git config --global user.email 2>/dev/null || true)"
+  [[ -n "$he" ]] && ok "git identity on this Mac: ${hn:-<no name>} <$he> (boxes don't use it; each workspace sets its own)"
   docker image inspect "$BASE_IMAGE" >/dev/null 2>&1 && ok "base image present" || warn "base image not pulled yet (happens on first start)"
 }
 
@@ -167,6 +170,8 @@ doctor_workspace() {
       else warn "$name: .claude-box/ is untracked; commit it, or keep it local with:"; hint "echo .claude-box/ >> $r/.git/info/exclude"; fi
     fi
   done
+
+  doctor_git_identity "$ws"
 
   local names; names="$(secret_names "$ws")"
   for var in $names; do
@@ -207,6 +212,97 @@ cmd_secret() {
   v=""
 }
 
+# --- commit signing: a dedicated SSH key per workspace --------------------------------------------
+# The private key is stored base64 (one line) in the Keychain item claude-box/<ws>/GIT_SIGNING_KEY;
+# the public key is kept next to the settings as .claude-box/signing-key.pub (not secret).
+ensure_signing_key() {  # $1 ws, $2 email
+  local ws="$1" email="$2" cfg tmp; cfg="$(ws_cfg "$ws")"
+  [[ -n "$(keychain "$ws" GIT_SIGNING_KEY)" && -f "$cfg/signing-key.pub" ]] && return 0
+  tmp="$(mktemp -d)"
+  # The private key only touches disk in this temp folder, which is removed whatever happens.
+  if ssh-keygen -q -t ed25519 -N "" -C "$email" -f "$tmp/key" </dev/null \
+     && security add-generic-password -U -s "claude-box/$ws/GIT_SIGNING_KEY" -a "${USER:-claude-box}" \
+          -w "$(base64 < "$tmp/key" | tr -d '\n')" \
+     && cp "$tmp/key.pub" "$cfg/signing-key.pub"; then
+    rm -rf "$tmp"
+  else
+    rm -rf "$tmp"; echo "Couldn't make or store the signing key." >&2; exit 1
+  fi
+  echo "Made a new SSH signing key for $ws (private key in the Keychain, only used inside this box)."
+}
+
+# Where to register the public key, per host of the workspace's repos.
+signing_key_instructions() {
+  local ws="$1" pub hosts="" r u h; pub="$(ws_cfg "$ws")/signing-key.pub"
+  for r in $(ws_repos "$ws"); do
+    u="$(https_url "$(git -C "$r" remote get-url origin 2>/dev/null || true)")"; h="$(url_host "$u")"
+    [[ -n "$h" && " $hosts " != *" $h "* ]] && hosts="$hosts $h"
+  done
+  [[ -z "$hosts" ]] && hosts=" github.com $(gitlab_host_for "$ws")"
+  pbcopy < "$pub" 2>/dev/null && echo "Public key (copied to the clipboard):" || echo "Public key:"
+  echo "  $(cat "$pub")"
+  echo "Add it to your account as a signing key:"
+  for h in $hosts; do
+    case "$h" in
+      github.com) echo "  GitHub: https://github.com/settings/ssh/new  (Key type: Signing Key)" ;;
+      *)          echo "  GitLab: https://$h/-/user_settings/ssh_keys  (Usage type: Signing)" ;;
+    esac
+  done
+  echo "Commits then show as Verified when git-email ($(cfg_line "$ws" git-email)) is a verified email there."
+}
+
+# doctor: is the key registered and the email verified on the host? Needs a token that may read
+# them (GitLab: read_user or api; GitHub fine-grained: "SSH signing keys" + "Email addresses" read).
+check_signing_on_host() {  # $1 ws, $2 host, $3 key "type base64", $4 email
+  local ws="$1" host="$2" key="$3" email="$4" tok code body; body="$(mktemp)"
+  if [[ "$host" == github.com ]]; then
+    tok="$(keychain "$ws" GH_TOKEN)"
+    [[ -z "$tok" ]] && { warn "can't check signing on GitHub without GH_TOKEN"; rm -f "$body"; return; }
+    code=$(curl -s -o "$body" -w '%{http_code}' -H "Authorization: Bearer $tok" https://api.github.com/user/ssh_signing_keys)
+    if [[ "$code" != 200 ]]; then warn "can't check GitHub signing keys (HTTP $code; token lacks \"SSH signing keys\" read)"
+    elif jq -e --arg k "$key" 'any(.[]; (.key | split(" ")[0:2] | join(" ")) == $k)' "$body" >/dev/null; then ok "signing key registered on GitHub"
+    else bad "signing key not registered on GitHub"; hint "claude-box set $ws signing on  (prints the key and where to add it)"; fi
+    code=$(curl -s -o "$body" -w '%{http_code}' -H "Authorization: Bearer $tok" https://api.github.com/user/emails)
+    if [[ "$code" != 200 ]]; then warn "can't check GitHub emails (HTTP $code; token lacks \"Email addresses\" read)"
+    elif jq -e --arg e "$email" 'any(.[]; (.email | ascii_downcase) == ($e | ascii_downcase) and .verified)' "$body" >/dev/null; then ok "$email verified on GitHub"
+    else bad "$email isn't a verified email on your GitHub account (commits won't show as Verified)"; fi
+  else
+    tok="$(keychain "$ws" GITLAB_TOKEN)"
+    [[ -z "$tok" ]] && { warn "can't check signing on $host without GITLAB_TOKEN"; rm -f "$body"; return; }
+    code=$(curl -s -o "$body" -w '%{http_code}' -H "PRIVATE-TOKEN: $tok" "https://$host/api/v4/user/keys")
+    if [[ "$code" != 200 ]]; then warn "can't check $host SSH keys (HTTP $code; token needs read_user or api)"
+    elif jq -e --arg k "$key" 'any(.[]; (.key | split(" ")[0:2] | join(" ")) == $k and ((.usage_type // "auth_and_signing") | test("signing")))' "$body" >/dev/null; then ok "signing key registered on $host"
+    else bad "signing key not registered on $host for signing"; hint "claude-box set $ws signing on  (prints the key and where to add it)"; fi
+    code=$(curl -s -o "$body" -w '%{http_code}' -H "PRIVATE-TOKEN: $tok" "https://$host/api/v4/user")
+    local primary=""; [[ "$code" == 200 ]] && primary="$(jq -r '.email // empty' "$body")"
+    code=$(curl -s -o "$body" -w '%{http_code}' -H "PRIVATE-TOKEN: $tok" "https://$host/api/v4/user/emails")
+    if [[ "$code" != 200 ]]; then warn "can't check $host emails (HTTP $code; token needs read_user or api)"
+    elif [[ "$(echo "$primary" | tr '[:upper:]' '[:lower:]')" == "$(echo "$email" | tr '[:upper:]' '[:lower:]')" ]] \
+      || jq -e --arg e "$email" 'any(.[]; (.email | ascii_downcase) == ($e | ascii_downcase) and .confirmed_at != null)' "$body" >/dev/null; then ok "$email verified on $host"
+    else bad "$email isn't a verified email on your $host account (commits won't show as Verified)"; fi
+  fi
+  rm -f "$body"
+}
+
+doctor_git_identity() {
+  local ws="$1" cfg name email; cfg="$(ws_cfg "$1")"; name="$(cfg_line "$ws" git-name)"; email="$(cfg_line "$ws" git-email)"
+  if [[ -n "$email" ]]; then ok "git identity ${name:-<no name>} <$email>"
+  else warn "no git identity: commits in the box fail"; hint "claude-box set $ws git-name \"Your Name\"; claude-box set $ws git-email you@example.com"; fi
+  [[ "$(cfg_value "$ws" signing)" == on ]] || return 0
+  if [[ -z "$(keychain "$ws" GIT_SIGNING_KEY)" || ! -f "$cfg/signing-key.pub" ]]; then
+    bad "signing is on, but the signing key is missing"; hint "claude-box set $ws signing on"; return
+  fi
+  ok "commits and tags are signed (SSH key $(awk '{print $1}' "$cfg/signing-key.pub"))"
+  local key hosts="" r u h; key="$(awk '{print $1" "$2}' "$cfg/signing-key.pub")"
+  for r in $(ws_repos "$ws"); do
+    u="$(https_url "$(git -C "$r" remote get-url origin 2>/dev/null || true)")"; h="$(url_host "$u")"
+    [[ -n "$h" && " $hosts " != *" $h "* ]] && hosts="$hosts $h"
+  done
+  for h in $hosts; do
+    case "$h" in github.com|"$(gitlab_host_for "$ws")") check_signing_on_host "$ws" "$h" "$key" "$email" ;; esac
+  done
+}
+
 # --- set: one setting per file in .claude-box/ ----------------------------------------------------
 cmd_set() {
   local ws="${1:-}" key="${2:-}" val="${3:-}"; need_ws "$ws"
@@ -218,14 +314,28 @@ cmd_set() {
              if [[ "$val" == private ]]; then rm -f "$cfg/profile"; else echo "$val" > "$cfg/profile"; fi ;;
     connectors|docker|gcloud)
              case "$val" in on) echo on > "$cfg/$key" ;; off) rm -f "$cfg/$key" ;; *) echo "$key must be on or off" >&2; exit 2 ;; esac ;;
+    git-name) val="${*:3}"   # unquoted "Jane Doe" arrives as two arguments
+             [[ -n "$val" ]] || { echo "usage: claude-box set <workspace> git-name \"Jane Doe\"" >&2; exit 2; }
+             echo "$val" > "$cfg/git-name" ;;
+    git-email) [[ "$val" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || { echo "git-email must be an email address" >&2; exit 2; }
+             echo "$val" > "$cfg/git-email" ;;
+    signing) case "$val" in
+               on)  local email; email="$(cfg_line "$ws" git-email)"
+                    [[ -n "$email" ]] || { echo "set the email first (it must be verified on your account): claude-box set $ws git-email you@example.com" >&2; exit 2; }
+                    ensure_signing_key "$ws" "$email"
+                    echo on > "$cfg/signing" ;;
+               off) rm -f "$cfg/signing" ;;
+               *)   echo "signing must be on or off" >&2; exit 2 ;;
+             esac ;;
     color)   [[ "$val" =~ ^#[0-9A-Fa-f]{6}$ ]] || { echo "color must be #RRGGBB" >&2; exit 2; }
              echo "$val" > "$cfg/color" ;;
     env)     [[ "$val" =~ ^[A-Z_][A-Z0-9_]*=.*$ ]] || { echo "env must be KEY=value" >&2; exit 2; }
              local k="${val%%=*}"; touch "$cfg/env"
              grep -v "^$k=" "$cfg/env" > "$cfg/env.tmp" || true; echo "$val" >> "$cfg/env.tmp"; mv "$cfg/env.tmp" "$cfg/env" ;;
-    *) echo "usage: claude-box set <workspace> profile|connectors|docker|gcloud|color|env <value>" >&2; exit 2 ;;
+    *) echo "usage: claude-box set <workspace> profile|connectors|docker|gcloud|git-name|git-email|signing|color|env <value>" >&2; exit 2 ;;
   esac
   echo "$ws: $key = $val"
+  [[ "$key" == signing && "$val" == on ]] && signing_key_instructions "$ws"
   [[ "$key" == gcloud && "$val" == on ]] && echo "Log gcloud in for this workspace with: claude-box gcloud-login $ws"
   return 0
 }
