@@ -170,6 +170,14 @@ doctor_workspace() {
       else warn "$name: .claude-box/ is untracked; commit it, or keep it local with:"; hint "echo .claude-box/ >> $r/.git/info/exclude"; fi
     fi
   done
+  if [[ ! -d "$d/.git" && -n "$repos" ]]; then   # multi-repo: CLAUDE.md should name every repo folder
+    local missing folders="" origins=""; missing="$(claude_md_missing "$ws")"
+    for r in $missing; do folders="$folders${folders:+, }$(basename "$r")/"; origins="$origins $(repo_origin "$r")"; done
+    if [[ ! -f "$d/CLAUDE.md" ]]; then warn "no CLAUDE.md telling Claude which folder holds which repo"
+    elif [[ -n "$missing" ]]; then warn "CLAUDE.md doesn't list $folders"
+    else ok "CLAUDE.md lists every repo"; fi
+    [[ -n "$missing" ]] && hint "add them (keeps what's written there): claude-box init $ws$origins"
+  fi
 
   doctor_git_identity "$ws"
 
@@ -426,6 +434,52 @@ cmd_profiles() {
 looks_like_url() { [[ "$1" == *://* || "$1" == git@*:* || "$1" =~ ^[A-Za-z0-9.-]+\.[a-z]{2,}/.+ ]]; }
 host_var() { case "$1" in github.com) echo GH_TOKEN ;; *gitlab*) echo GITLAB_TOKEN ;; esac; }
 
+# --- the multi-repo CLAUDE.md: tells Claude which folder holds which repo ------------------------
+repo_origin() { https_url "$(git -C "$1" remote get-url origin 2>/dev/null || true)"; }
+claude_md_row() {  # $1 repo dir
+  local u; u="$(repo_origin "$1")"
+  echo "| \`$(basename "$1")/\` | ${u:+$(url_host "$u")/$(url_path "$u")} |"
+}
+# Repo folders of a multi-repo workspace that its CLAUDE.md doesn't mention (all, if it has none).
+claude_md_missing() {
+  local d="$WS_ROOT/$1" r
+  [[ -d "$d/.git" ]] && return 0
+  for r in $(ws_repos "$1"); do grep -qF "$(basename "$r")/" "$d/CLAUDE.md" 2>/dev/null || echo "$r"; done
+}
+# Write the CLAUDE.md, or add a row for each repo it doesn't list yet. What the user wrote is kept.
+sync_claude_md() {
+  local ws="$1" f="$WS_ROOT/$1/CLAUDE.md" r missing rows=""
+  missing="$(claude_md_missing "$ws")"; [[ -n "$missing" ]] || return 0
+  for r in $missing; do rows="$rows$(claude_md_row "$r")"$'\n'; done
+  if [[ ! -f "$f" ]]; then
+    {
+      echo "# Workspace: $ws"
+      echo
+      echo "This workspace holds several repositories. Each folder is its own git repo: branch,"
+      echo "commit and open PRs/MRs per repo (gh for GitHub, glab for GitLab)."
+      echo
+      echo "| Folder | Repository |"
+      echo "|---|---|"
+      printf '%s' "$rows"
+      echo
+      echo "Describe here how the repos relate and anything that spans them."
+    } > "$f"
+    return
+  fi
+  if grep -q '^| *Folder *| *Repository *|' "$f"; then   # add the rows at the end of the repo table
+    CB_ROWS="$rows" awk '
+      BEGIN { rows = ENVIRON["CB_ROWS"] }
+      intable && !/^\|/ { printf "%s", rows; intable = 0; done = 1 }
+      { print }
+      !done && /^\| *Folder *\| *Repository *\|/ { intable = 1 }
+      END { if (intable) printf "%s", rows }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  else
+    printf '\n## Repositories\n\n| Folder | Repository |\n|---|---|\n%s' "$rows" >> "$f"
+  fi
+  for r in $missing; do echo "Added $(basename "$r")/ to $f"; done
+}
+
 # git against a remote: only the workspace token (never the Mac's credential helpers) and never a
 # prompt, so a missing token fails fast instead of waiting for input on the user's terminal.
 git_remote() {  # $1 dir, $2 user, $3 token, rest: git args
@@ -555,21 +609,8 @@ cmd_init() {
   fi
 
   # Multi-repo: a CLAUDE.md on top so Claude knows the layout (each repo's own CLAUDE.md still
-  # applies when it works in that repo). Kept if it exists.
-  if [[ $multi -eq 1 && ! -f "$d/CLAUDE.md" ]]; then
-    {
-      echo "# Workspace: $ws"
-      echo
-      echo "This workspace holds several repositories. Each folder is its own git repo: branch,"
-      echo "commit and open PRs/MRs per repo (gh for GitHub, glab for GitLab)."
-      echo
-      echo "| Folder | Repository |"
-      echo "|---|---|"
-      for url in "${urls[@]}"; do echo "| \`$(basename "$(url_path "$url")")/\` | $(url_host "$url")/$(url_path "$url") |"; done
-      echo
-      echo "Describe here how the repos relate and anything that spans them."
-    } > "$d/CLAUDE.md"
-  fi
+  # applies when it works in that repo). Repos added later get a row in its table.
+  [[ $multi -eq 1 ]] && sync_claude_md "$ws"
 
   local compose=0 n
   for r in $repos; do
