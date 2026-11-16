@@ -1,0 +1,7 @@
+#!/bin/bash
+# gcloud only opens a browser for `gcloud auth login` (and `auth application-default login`)
+# when it sees a display, and otherwise falls back to pasting a code, which can't work under
+# `!` in Claude Code. The box can open the Mac's browser (box-open, see bin/claude-box) and the
+# launcher relays the sign-in's localhost redirect back into the box, so let gcloud use it.
+if [[ -n "${CLAUDE_BOX_OPEN_PORT:-}" && -z "${DISPLAY:-}" ]]; then export DISPLAY=:0; fi
+exec /usr/bin/gcloud "$@"

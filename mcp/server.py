@@ -82,8 +82,8 @@ Typical setup flow:
    expiry), to COPY it and to say when done. NEVER ask the user to paste a secret into the chat.
    Then call store_secret_from_clipboard; it validates the token and clears the clipboard.
    gcloud on: there is no token to copy. Tell the user to run `claude-box gcloud-login
-   <workspace>` themselves in a terminal (it is interactive: open the printed link, sign in,
-   paste the code back). The login is kept for that workspace only, and an agent in the box can
+   <workspace>` themselves in a terminal (it opens the sign-in in their browser; later, when
+   the login expires, `! gcloud auth login --update-adc` in the box works too). The login is kept for that workspace only, and an agent in the box can
    do whatever that Google account can, so suggest an account or project with only the access
    the work needs. For GKE, kubectl in the box works after `gcloud container clusters
    get-credentials <cluster>` there.

@@ -185,9 +185,14 @@ To shrink that, limit Docker Desktop → Settings → Resources → File sharing
 box (an extra image layer, built once on the next start). Then log in, in a terminal:
 
 ```sh
-claude-box gcloud-login <workspace>    # open the printed link, sign in, paste the code back
+claude-box gcloud-login <workspace>    # signs in through your browser
 claude-box set <workspace> env CLOUDSDK_CORE_PROJECT=my-project   # optional default project
 ```
+
+When the login expires, `! gcloud auth login --update-adc` in the Claude session works too. As
+on the Mac, gcloud opens the sign-in in your browser and gets the result through a
+`localhost:<port>` redirect; the launcher relays that port into the box for the few minutes the
+sign-in takes (nothing is published, and a port already in use on the Mac is left alone).
 
 The login (also used as Application Default Credentials) and the kubeconfig live in a Docker
 volume of that workspace (`claude-box-gcloud-<workspace>`), not in the profile, so other

@@ -176,8 +176,8 @@ if [[ ${#git_cfg[@]} -gt 0 ]]; then
 fi
 
 if [[ $gcloud_login -eq 1 ]]; then
-  # No browser redirect to localhost in a container: gcloud prints a URL, you paste back the code.
-  cmd=(gcloud auth login --update-adc --no-launch-browser)
+  # Opens the sign-in in the Mac's browser; the bridge relays its localhost redirect into the box.
+  cmd=(gcloud auth login --update-adc)
 elif [[ $shell -eq 1 ]]; then
   cmd=(bash)
 else
@@ -224,6 +224,7 @@ open_in_editor() {
     open -a "Visual Studio Code" "$real" >/dev/null 2>&1 &
   fi
 }
+container="claude-box-${profile}-${ws}-$$"
 open_port=""
 for p in $(jot -r 30 20000 60000); do
   nc -z 127.0.0.1 "$p" 2>/dev/null || { open_port="$p"; break; }
@@ -252,9 +253,38 @@ serve_bridge_request() {
     code:/workspace/*)
       open_in_editor "${req#code:}" ;;
     *)
-      if [[ "$req" =~ ^https?://[^[:space:]]+$ ]]; then open "$req"; fi ;;
+      if [[ "$req" =~ ^https?://[^[:space:]]+$ ]]; then relay_sign_in_redirect "$req"; open "$req"; fi ;;
   esac
   return 0
+}
+# A sign-in started in the box (gcloud auth login and other OAuth logins) sends the browser back
+# to http://localhost:<port> on the Mac, while the tool listens on localhost in the box. Relay that
+# port into the box, one connection at a time, until the tool stops listening (or 5 minutes pass).
+# Nothing is published, so boxes don't fight over ports; a port already taken on the Mac is skipped.
+relay_sign_in_redirect() {
+  local re='redirect_uri=http(%3[Aa]|:)(%2[Ff]|/)(%2[Ff]|/)(localhost|127\.0\.0\.1)(%3[Aa]|:)([0-9]+)'
+  [[ "$1" =~ $re ]] || return 0
+  local port="${BASH_REMATCH[6]}"
+  [[ $port -ge 1024 && $port -le 65535 ]] || return 0
+  nc -z 127.0.0.1 "$port" 2>/dev/null && return 0
+  (
+    to_box="$bridge_dir/relay-$port-in"; from_box="$bridge_dir/relay-$port-out"
+    mkfifo "$to_box" "$from_box" || exit 0
+    trap 'pkill -f "nc -l 127.0.0.1 $port\$"; rm -f "$to_box" "$from_box"' EXIT
+    end=$((SECONDS + 300))
+    while [[ $SECONDS -lt $end ]]; do
+      nc -l 127.0.0.1 "$port" < "$from_box" > "$to_box" &
+      # In the box: connect to the tool (fails once it stops listening), pipe the browser's request in and
+      # its response out. Redirects in this order, or the two fifo opens wait on each other.
+      docker exec -i "$container" bash -c '
+        exec 3<>"/dev/tcp/127.0.0.1/$1" 2>/dev/null || exit 7
+        exec 4<&0; cat <&4 >&3 & exec timeout 300 cat <&3' _ "$port" > "$from_box" < "$to_box"
+      status=$?
+      # macOS nc keeps the browser's connection open after the response; closing it ends the page.
+      pkill -f "nc -l 127.0.0.1 $port\$"
+      [[ $status -eq 0 ]] || break   # tool gone, login abandoned (timeout) or docker failed
+    done
+  ) </dev/null >/dev/null 2>&1 &
 }
 if [[ -n "$open_port" ]] && bridge_dir="$(mktemp -d)" && mkfifo "$bridge_dir/reply"; then
   (
@@ -343,7 +373,7 @@ trap cleanup EXIT
 # (~/.claude, ~/.ssh, ~/.gitconfig, gh/glab/gcloud config) and no env passthrough beyond the above.
 # Each project gets its own path (/workspace/<name>), so Claude keeps separate history per project.
 docker run --rm -it --init \
-  --name "claude-box-${profile}-${ws}-$$" \
+  --name "$container" \
   "${net_args[@]}" \
   -e CLAUDE_BOX_OPEN_PORT="$open_port" -e CLAUDE_BOX_OPEN_TOKEN="$open_token" \
   -e TERM="${TERM:-xterm-256color}" -e COLORTERM="${COLORTERM:-}" \
