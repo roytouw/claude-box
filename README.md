@@ -189,8 +189,9 @@ out, remove the volume: `docker volume rm claude-box-gcloud-<workspace>`.
 ## Troubleshooting
 
 **"Workspace not trusted"** when sending an agent to a repo folder: trust is kept per folder in the
-workspace's profile (not on your Mac). With its boxes closed, run `claude-box trust <workspace>`
-to trust the workspace and all its repo folders at once.
+workspace's profile (not on your Mac). Run `claude-box trust <workspace>` (also fine while the box
+runs) to trust the workspace and all its repo folders at once. A repo added later with
+`claude-box init <workspace> <url>` is trusted automatically when the workspace already is.
 
 ## Develop
 

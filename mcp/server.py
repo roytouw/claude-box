@@ -47,6 +47,8 @@ Typical setup flow:
      short name and confirm it with the user before calling. Only make separate workspaces for
      unrelated projects; if unsure, ask.
    - To add a repo to an existing multi-repo workspace, pass that workspace's name and the URL.
+     If the workspace is trusted, the new repo folder is trusted with it (the result says so) and
+     can be used right away, even in a running box; then skip the other steps unless asked.
    If cloning fails because a repo is private, the user needs a token first (step 3), then call
    create_workspace again with the same arguments.
 2. Ask the user what matters, then configure_workspace:
@@ -227,7 +229,7 @@ def configure_workspace(
 def trust_workspace(workspace: str) -> str:
     """Accept Claude's folder trust prompt for a workspace and its repo folders, in the workspace's
     profile, so agents can be sent to the repo folders without "Workspace not trusted". Only call
-    it when the user agreed. Boxes on that profile must be closed first; the result says so.
+    it when the user agreed. Works while boxes on that profile are running.
     """
     return run("trust", workspace)
 
