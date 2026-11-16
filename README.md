@@ -64,7 +64,14 @@ claude-box --chat myproject    # a plain new chat instead
 claude-box --shell myproject   # bash instead
 ```
 
-Edit the code with any IDE on the host; the folder is mounted into the container.
+Edit the code with any IDE on the host; the folder is mounted into the container. From inside the
+box, `code .` (or `!code .` in Claude, or `code <repo>/<file>`) opens that path in VS Code on your
+Mac. Use another editor by exporting e.g. `CLAUDE_BOX_EDITOR=cursor` (or `zed`) before starting the
+box. Only paths inside the workspace can be opened.
+
+An agent in the box can run `code` too, and it can write `.vscode/` settings and tasks. Keep VS
+Code's Workspace Trust on and don't trust `~/claude-box/workspaces`, so a task the agent added
+can't run on your Mac when the folder opens.
 
 **Images**: copy or screenshot an image on the Mac (e.g. ⌃⇧⌘4), then press **Ctrl+V** (not ⌘V)
 in Claude Code. The launcher hands the box the image from your Mac clipboard on request. Only

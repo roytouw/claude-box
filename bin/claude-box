@@ -200,6 +200,29 @@ fi
 # browser. clip-has-image / clip-image let xclip in the box (box-clip) paste an image from the Mac
 # clipboard, so Ctrl+V in Claude Code works. Only images are served, never clipboard text: secrets
 # pass through the Mac clipboard (claude-box secret).
+# code:<path> comes from `code <path>` in the box (box-code): the path is mapped to the workspace
+# folder on the Mac and opened in $CLAUDE_BOX_EDITOR (default: VS Code's `code`, e.g. `cursor` or
+# `zed`). Only paths that resolve (symlinks followed, on the Mac) to inside the workspace are opened.
+ws_real="$(cd "$ws_path" && pwd -P)"
+open_in_editor() {
+  local p="$1" target real editor
+  [[ "$p" == "/workspace/$ws" || "$p" == "/workspace/$ws/"* ]] || return 0
+  target="$ws_path${p#"/workspace/$ws"}"
+  if [[ -d "$target" ]]; then
+    real="$(cd "$target" 2>/dev/null && pwd -P)" || return 0
+  elif [[ -f "$target" && ! -L "$target" ]]; then
+    real="$(cd "$(dirname "$target")" 2>/dev/null && pwd -P)/$(basename "$target")" || return 0
+  else
+    return 0
+  fi
+  [[ "$real" == "$ws_real" || "$real" == "$ws_real/"* ]] || return 0
+  read -ra editor <<< "${CLAUDE_BOX_EDITOR:-code}"
+  if command -v "${editor[0]}" >/dev/null 2>&1; then
+    "${editor[@]}" "$real" >/dev/null 2>&1 &
+  elif [[ "${editor[0]}" == "code" ]]; then
+    open -a "Visual Studio Code" "$real" >/dev/null 2>&1 &
+  fi
+}
 open_port=""
 for p in $(jot -r 30 20000 60000); do
   nc -z 127.0.0.1 "$p" 2>/dev/null || { open_port="$p"; break; }
@@ -225,6 +248,8 @@ serve_bridge_request() {
         echo none
       fi
       rm -f "$png" ;;
+    code:/workspace/*)
+      open_in_editor "${req#code:}" ;;
     *)
       if [[ "$req" =~ ^https?://[^[:space:]]+$ ]]; then open "$req"; fi ;;
   esac

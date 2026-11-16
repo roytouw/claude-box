@@ -1,0 +1,42 @@
+#!/bin/bash
+# `code` stand-in: asks the claude-box launcher on the Mac to open workspace paths in the host's
+# editor (VS Code by default, see CLAUDE_BOX_EDITOR in bin/claude-box). Only paths inside
+# /workspace/<name> can be opened; the launcher maps them to the folder on the Mac.
+# Options (e.g. -n, --reuse-window) are ignored; with no path it opens the current directory.
+paths=()
+for a in "$@"; do
+  [[ "$a" == -* ]] && continue
+  paths+=("$a")
+done
+[[ ${#paths[@]} -eq 0 ]] && paths=(.)
+
+if [[ -z "${CLAUDE_BOX_OPEN_PORT:-}" ]]; then
+  echo "claude-box: no link to the Mac in this box; open the workspace folder on your Mac instead" >&2
+  exit 1
+fi
+
+rc=0
+for p in "${paths[@]}"; do
+  abs="$(realpath -m -- "$p")"
+  if [[ "$abs" != /workspace/* ]]; then
+    echo "claude-box: can only open paths under /workspace, not: $abs" >&2
+    rc=1; continue
+  fi
+  sent=0
+  # The launcher serves one request at a time; retry briefly while it gets ready for the next.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if exec 3<>"/dev/tcp/host.docker.internal/${CLAUDE_BOX_OPEN_PORT}" 2>/dev/null; then
+      printf '%s\ncode:%s\n' "${CLAUDE_BOX_OPEN_TOKEN:-}" "$abs" >&3
+      exec 3>&-
+      sent=1; break
+    fi
+    sleep 0.2
+  done
+  if [[ $sent -eq 1 ]]; then
+    echo "Opening $abs in your editor on the Mac" >&2
+  else
+    echo "claude-box: could not reach the launcher on the Mac to open $abs" >&2
+    rc=1
+  fi
+done
+exit $rc
