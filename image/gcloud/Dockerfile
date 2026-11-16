@@ -13,6 +13,9 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
          google-cloud-cli google-cloud-cli-gke-gcloud-auth-plugin \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /gcloud && chown agent:agent /gcloud
+# Ahead of /usr/bin/gcloud on PATH: lets `gcloud auth login` sign in through the Mac's browser.
+COPY gcloud /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/gcloud
 USER agent
 
 # gcloud config + login, Application Default Credentials and the kubeconfig that
