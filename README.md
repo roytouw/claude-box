@@ -66,6 +66,12 @@ claude-box --shell myproject   # bash instead
 
 Edit the code with any IDE on the host; the folder is mounted into the container.
 
+**Images**: copy or screenshot an image on the Mac (e.g. ⌃⇧⌘4), then press **Ctrl+V** (not ⌘V)
+in Claude Code. The launcher hands the box the image from your Mac clipboard on request. Only
+images are shared that way, never clipboard text, but anything in the box can ask for the current
+clipboard image while the box runs. Links the box opens go to your Mac's browser, and copying in
+the box (`xclip`) reaches your Mac clipboard.
+
 **Profiles** keep accounts apart. A profile is a named Docker volume with its own Claude login,
 plugins and memory (`private` by default). The name is only a label: the account is whatever you
 log in with on its first start. Run two side by side with different accounts:
