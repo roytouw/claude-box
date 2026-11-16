@@ -1,6 +1,6 @@
 [project]
 name = "claude-box"
-version = "0.7.0"
+version = "0.7.1"
 description = "Run Claude Code in a Docker container per project, separated from your host setup"
 readme = "README.md"
 license = "MIT"
