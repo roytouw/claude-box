@@ -195,23 +195,46 @@ if [[ "$signing" == "on" ]]; then
     exec "$@"' "$SIGNING_KEY" "${cmd[@]}")
 fi
 
-# --- link opener: container xdg-open/$BROWSER -> `open` on the Mac -----------------------------
+# --- host bridge: container xdg-open/$BROWSER -> `open` on the Mac, and clipboard images --------
+# One request per connection: a token line, then a request line. A URL is opened in the Mac's
+# browser. clip-has-image / clip-image let xclip in the box (box-clip) paste an image from the Mac
+# clipboard, so Ctrl+V in Claude Code works. Only images are served, never clipboard text: secrets
+# pass through the Mac clipboard (claude-box secret).
 open_port=""
 for p in $(jot -r 30 20000 60000); do
   nc -z 127.0.0.1 "$p" 2>/dev/null || { open_port="$p"; break; }
 done
 open_token="$(openssl rand -hex 16)"
 bridge_pid=""
-if [[ -n "$open_port" ]]; then
-  (
-    while true; do
-      t=""; u=""
-      { read -r t; read -r u; } < <(nc -l 127.0.0.1 "$open_port" 2>/dev/null)
-      if [[ "$t" == "$open_token" && "$u" =~ ^https?://[^[:space:]]+$ ]]; then
-        open "$u"
+bridge_dir=""
+serve_bridge_request() {
+  local t="" req="" png="$bridge_dir/clip.png"
+  { read -r t && read -r req; } || return 0
+  if [[ "$t" != "$open_token" ]]; then sleep 0.2; return 0; fi
+  case "$req" in
+    clip-has-image)
+      if osascript -e 'the clipboard as «class PNGf»' >/dev/null 2>&1; then echo yes; else echo no; fi ;;
+    clip-image)
+      rm -f "$png"
+      if osascript -e 'set png_data to (the clipboard as «class PNGf»)' \
+           -e "set fp to open for access POSIX file \"$png\" with write permission" \
+           -e 'write png_data to fp' -e 'close access fp' >/dev/null 2>&1 && [[ -s "$png" ]]; then
+        echo "png $(wc -c < "$png" | tr -d ' ')"
+        cat "$png"
       else
-        sleep 0.2
+        echo none
       fi
+      rm -f "$png" ;;
+    *)
+      if [[ "$req" =~ ^https?://[^[:space:]]+$ ]]; then open "$req"; fi ;;
+  esac
+  return 0
+}
+if [[ -n "$open_port" ]] && bridge_dir="$(mktemp -d)" && mkfifo "$bridge_dir/reply"; then
+  (
+    # nc reads the reply from a fifo the handler writes to (macOS bash 3.2 has no coproc).
+    while true; do
+      nc -l 127.0.0.1 "$open_port" < "$bridge_dir/reply" | serve_bridge_request > "$bridge_dir/reply"
     done
   ) 2>/dev/null &
   bridge_pid=$!
@@ -278,6 +301,7 @@ cleanup() {
   fi
   [[ -n "$bridge_pid" ]] && kill "$bridge_pid" 2>/dev/null
   [[ -n "$open_port" ]] && pkill -f "nc -l 127.0.0.1 $open_port" 2>/dev/null
+  [[ -n "$bridge_dir" ]] && rm -rf "$bridge_dir"
   if [[ -n "$tty_out" ]]; then
     if [[ $color_set -eq 1 ]]; then
       if [[ -n "${KITTY_WINDOW_ID:-}" ]]; then printf '\033[#Q' > "$tty_out"   # pop colors

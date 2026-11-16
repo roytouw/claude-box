@@ -1,5 +1,5 @@
 # claude-box base image: Claude Code + gh + glab + git + uv + docker CLI + kubectl + k9s, as a non-root user, with helpers that
-# open links in the host browser and copy to the host clipboard. Contains no credentials.
+# open links in the host browser, copy to the host clipboard and paste images from it. No credentials.
 FROM ghcr.io/astral-sh/uv:0.8.0 AS uv
 
 FROM node:22-bookworm-slim

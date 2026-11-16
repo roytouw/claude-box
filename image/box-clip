@@ -1,9 +1,46 @@
 #!/bin/bash
-# xclip / xsel stand-in: copies stdin to the Mac clipboard via the terminal (OSC 52, supported by
-# kitty, iTerm2, WezTerm, Ghostty). Reading the clipboard is not supported.
-for a in "$@"; do
-  case "$a" in -o|-out|--output) echo "clipboard read not supported in claude-box" >&2; exit 1 ;; esac
+# xclip / xsel stand-in.
+# Copy: stdin goes to the Mac clipboard via the terminal (OSC 52, supported by kitty, iTerm2,
+# WezTerm, Ghostty).
+# Paste: only images, fetched from the Mac clipboard by the claude-box launcher (see bin/claude-box).
+# This covers what Claude Code runs for Ctrl+V:
+#   xclip -selection clipboard -t TARGETS -o      lists image/png when the clipboard holds an image
+#   xclip -selection clipboard -t image/png -o    writes the PNG to stdout
+out=0; target=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o|-out|--output) out=1 ;;
+    -t|-target) target="${2:-}"; shift ;;
+  esac
+  shift
 done
+
+# Sends one request to the launcher's bridge; the reply is readable on fd 3.
+bridge() {
+  [[ -n "${CLAUDE_BOX_OPEN_PORT:-}" ]] || return 1
+  exec 3<>"/dev/tcp/host.docker.internal/${CLAUDE_BOX_OPEN_PORT}" 2>/dev/null || return 1
+  printf '%s\n%s\n' "${CLAUDE_BOX_OPEN_TOKEN:-}" "$1" >&3
+}
+
+if [[ $out -eq 1 ]]; then
+  case "$target" in
+    TARGETS)
+      bridge clip-has-image || exit 1
+      read -r -t 10 answer <&3 || exit 1
+      [[ "$answer" == yes ]] || exit 1
+      echo image/png ;;
+    image/png)
+      bridge clip-image || exit 1
+      read -r -t 10 kind len <&3 || exit 1
+      [[ "$kind" == png && "$len" =~ ^[0-9]+$ ]] || exit 1
+      timeout 30 head -c "$len" <&3 ;;
+    *)
+      echo "claude-box: only images can be pasted from the Mac clipboard (xclip -t image/png -o)" >&2
+      exit 1 ;;
+  esac
+  exit
+fi
+
 data="$(base64 | tr -d '\n')"
 # Tools like gh run this without a controlling terminal, so /dev/tty can fail; fall back to the
 # container's terminal device.
