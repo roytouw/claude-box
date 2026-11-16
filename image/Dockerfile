@@ -45,9 +45,11 @@ RUN userdel -r node \
 COPY --chown=agent:agent seed-CLAUDE.md /home/agent/.claude/CLAUDE.md
 
 # Open links in the host browser and copy to the host clipboard (see bin/claude-box).
-COPY box-open box-clip /usr/local/bin/
-RUN chmod 0755 /usr/local/bin/box-open /usr/local/bin/box-clip \
+# `code <path>` opens workspace paths in the editor on the Mac.
+COPY box-open box-clip box-code /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/box-open /usr/local/bin/box-clip /usr/local/bin/box-code \
     && ln -s box-open /usr/local/bin/xdg-open \
+    && ln -s box-code /usr/local/bin/code \
     && ln -s box-clip /usr/local/bin/xclip \
     && ln -s box-clip /usr/local/bin/xsel
 
