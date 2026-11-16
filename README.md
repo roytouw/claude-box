@@ -46,6 +46,7 @@ claude-box doctor                      # checks your system (changes nothing)
 
 claude-box init <repo-url>             # one repo: workspace named after the repo, .claude-box/ generated (Go, pnpm)
 claude-box init <name> <url> <url>...  # repos worked on together: one workspace <name>, a folder per repo (named after it)
+claude-box init <name> <url>           # add a repo to that workspace (also listed in its CLAUDE.md)
 claude-box secret <name> GITLAB_TOKEN  # copy the token first: stores the clipboard, checks it, clears it
 claude-box set <name> git-email jane@acme.com   # git identity (also: git-name "Jane Doe")
 claude-box set <name> signing on       # signed commits: makes an SSH signing key, shows where to add it

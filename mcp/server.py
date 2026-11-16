@@ -135,7 +135,8 @@ def doctor(workspace: str | None = None) -> str:
 
     Without a workspace it checks the system (Docker, Keychain, uv, PATH, MCP registration).
     With a workspace it also checks git remotes, whether secrets exist and actually work against
-    GitHub/GitLab/Jira, and whether the project image builds. Changes nothing.
+    GitHub/GitLab/Jira, whether a multi-repo workspace's CLAUDE.md lists all its repos, and whether
+    the project image builds. Changes nothing.
     """
     return run("doctor", workspace) if workspace else run("doctor")
 
@@ -165,7 +166,8 @@ def create_workspace(repo_urls: list[str], name: str | None = None, own_profile:
     goes in its own subfolder, with .claude-box/ and a CLAUDE.md describing the layout on top. Generates a
     Dockerfile with the Go/pnpm versions found and lists the tokens needed per host (GH_TOKEN for
     GitHub, GITLAB_TOKEN for GitLab). Safe to call again: after storing a token for private repos,
-    or with an existing multi-repo workspace's name to add repos. SSH URLs are converted to HTTPS.
+    or with an existing multi-repo workspace's name to add repos (each added repo also gets a row in
+    the workspace's CLAUDE.md; what's written there is kept). SSH URLs are converted to HTTPS.
     own_profile: opt-in; give the workspace its own profile named after it (separate plugins,
     memory, history and agents) instead of sharing the default one. Only when the user chose it.
     """
