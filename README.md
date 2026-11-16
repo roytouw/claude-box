@@ -11,18 +11,14 @@ Cloud CLI is opt-in per workspace (see [Google Cloud](#google-cloud-opt-in)).
 ## Install
 
 Needs [uv](https://docs.astral.sh/uv/) and Docker Desktop. This installs the `claude-box` and
-`claude-box-mcp` commands, pinned to a release:
+`claude-box-mcp` commands, pinned to the newest release (git tag):
 
 ```sh
-uv tool install git+https://github.com/roytouw/claude-box@v0.7.0
+uv tool install "git+https://github.com/roytouw/claude-box@$(git ls-remote --tags --refs --sort=-v:refname https://github.com/roytouw/claude-box 'v*' | head -1 | cut -d/ -f3)"
 ```
 
-To update, install the newer tag over it (`uv tool upgrade` keeps the pinned tag). Check your
-version with `uv tool list`; releases are listed under the repo's tags.
-
-```sh
-uv tool install --force git+https://github.com/roytouw/claude-box@v0.7.0
-```
+To update to the newest release, run `claude-box update`. Check your version with `uv tool list`;
+releases are listed under the repo's tags.
 
 Workspaces live in `~/claude-box/workspaces` (override with `CLAUDE_BOX_WORKSPACES`).
 
@@ -211,8 +207,11 @@ runs) to trust the workspace and all its repo folders at once. A repo added late
 
 Work from a clone: `bin/claude-box` runs directly, and the MCP server runs standalone with
 `claude mcp add claude-box-dev -- uv run --script <clone>/mcp/server.py`. Try an install of your
-checkout with `uv tool install --force .`. Releases are git tags (`v0.1.0`, …) matching the
-version in `pyproject.toml`.
+checkout with `uv tool install --force .`.
+
+Releasing is only a tag: the package version comes from it (hatch-vcs), and the install command
+and `claude-box update` pick the newest tag. On main: `git tag -s v0.8.0 -m "v0.8.0: <summary>"`
+and `git push origin v0.8.0`.
 
 This repo ships its own `.claude-box/` (the `GH_TOKEN` it needs and a terminal color), so you can
 work on claude-box in a claude-box: `claude-box init https://github.com/roytouw/claude-box`, store a
