@@ -362,17 +362,35 @@ cmd_trust() {
   local p; p="$(cfg_value "$ws" profile)"; p="${p:-private}"
   local paths=("/workspace/$ws") r
   for r in $(ws_repos "$ws"); do [[ "$r" != "$d" ]] && paths+=("/workspace/$ws/${r#"$d/"}"); done
-  if docker ps --format '{{.Names}}' | grep -q "^claude-box-$p-"; then
-    echo "Close the running boxes on profile $p first (Claude rewrites its settings while running):" >&2
-    docker ps --format '  {{.Names}}' | grep "claude-box-$p-" >&2
-    exit 1
-  fi
+  profile_trust "$p" "${paths[@]}" || { echo "Couldn't update the trust settings of profile $p." >&2; exit 1; }
+  echo "Trusted in profile $p:"; printf '  %s\n' "${paths[@]}"
+}
+
+# Mark box paths as trusted in profile $1's ~/.claude.json. Takes the lock Claude Code itself takes
+# for that file (~/.claude.json.lock, a mkdir lock that is stale after 10s) and replaces the file
+# atomically. Claude re-reads the file under that lock before every save, so this is safe while
+# boxes on the profile are running. With --if-trusted, only when the first path is trusted already;
+# returns 3 when it isn't or the profile doesn't exist yet.
+profile_trust() {
+  local p="$1"; shift
+  local cond=0; [[ "${1:-}" == --if-trusted ]] && { cond=1; shift; }
+  if [[ $cond -eq 1 ]] && ! docker volume inspect "claude-box-home-$p" >/dev/null 2>&1; then return 3; fi
   local img="$BASE_IMAGE"; docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null
   docker run --rm -v "claude-box-home-$p:/home/agent" "$img" bash -c '
-    f=/home/agent/.claude.json; [ -s "$f" ] || echo "{}" > "$f"
-    jq --args "reduce \$ARGS.positional[] as \$p (.; .projects[\$p].hasTrustDialogAccepted = true)" "$@" < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-  ' _ "${paths[@]}"
-  echo "Trusted in profile $p:"; printf '  %s\n' "${paths[@]}"
+    cond=$1; shift
+    f=/home/agent/.claude.json; l=$f.lock
+    for _ in $(seq 1 150); do
+      mkdir "$l" 2>/dev/null && break
+      [ $(( $(date +%s) - $(stat -c %Y "$l" 2>/dev/null || date +%s) )) -gt 10 ] && rmdir "$l" 2>/dev/null
+      sleep 0.1
+    done
+    [ -d "$l" ] || exit 4
+    trap "rmdir $l" EXIT
+    [ -s "$f" ] || echo "{}" > "$f"
+    if [ "$cond" = 1 ] && [ "$(jq -r --arg p "$1" ".projects[\$p].hasTrustDialogAccepted // false" "$f")" != true ]; then exit 3; fi
+    jq --args "reduce \$ARGS.positional[] as \$p (.; .projects[\$p].hasTrustDialogAccepted = true)" "$@" < "$f" > "$f.claude-box.tmp" \
+      && mv "$f.claude-box.tmp" "$f"
+  ' _ "$cond" "$@"
 }
 
 # --- profiles: which Claude homes exist and who is logged in --------------------------------------
@@ -486,7 +504,7 @@ cmd_init() {
     fi
   done
 
-  local failed=() clashes=0 dir have
+  local failed=() added=() clashes=0 dir have
   for url in "${urls[@]}"; do
     if [[ $multi -eq 1 ]]; then dir="$d/$(basename "$(url_path "$url")")"; else dir="$d"; fi
     if [[ -d "$dir/.git" ]]; then
@@ -497,10 +515,19 @@ cmd_init() {
       fi
       continue
     fi
-    if clone_into "$dir" "$url" "$ws"; then echo "Cloned $(url_path "$url") into $dir"
+    if clone_into "$dir" "$url" "$ws"; then echo "Cloned $(url_path "$url") into $dir"; added+=("/workspace/$ws/${dir#"$d/"}")
     else failed+=("$url"); echo "Couldn't clone $url yet (private repo?)."; fi
   done
   [[ $multi -eq 0 && -d "$d/.git" ]] && { grep -qx '.claude-box/' "$d/.git/info/exclude" 2>/dev/null || echo '.claude-box/' >> "$d/.git/info/exclude"; }
+
+  # A repo added to a workspace the user already trusted gets that trust too, so agents can be sent
+  # to its folder right away (also while the box runs). A workspace that isn't trusted stays so.
+  if [[ $multi -eq 1 && ${#added[@]} -gt 0 ]]; then
+    local p rc=0; p="$(cfg_value "$ws" profile)"; p="${p:-private}"
+    profile_trust "$p" --if-trusted "/workspace/$ws" "${added[@]}" >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then echo "Trusted the new repo folder(s) in profile $p, like the rest of workspace $ws."
+    elif [[ $rc -ne 3 ]]; then echo "Couldn't trust the new repo folder(s) automatically; to do it: claude-box trust $ws"; fi
+  fi
 
   # Generate a Dockerfile from what the repos use (highest version wins; kept if it exists).
   local repos r go="" pnpm="" v notes=""
