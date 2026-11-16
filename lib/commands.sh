@@ -633,3 +633,16 @@ cmd_init() {
   [[ $clashes -gt 0 ]] && return 1
   echo "Check everything with: claude-box doctor $ws"
 }
+
+# --- update: install the newest release (git tag) over the installed one -------------------------
+REPO_URL="https://github.com/roytouw/claude-box"
+latest_tag() { git ls-remote --tags --refs --sort=-v:refname "$REPO_URL" 'v*' | head -1 | sed 's|.*refs/tags/||'; }
+cmd_update() {
+  if [[ "$BOX_DIR" != */claude_box/data ]]; then
+    echo "This claude-box runs from a clone ($BOX_DIR); update it with: git -C $BOX_DIR pull"; return
+  fi
+  local tag; tag="$(latest_tag)"
+  [[ -n "$tag" ]] || { echo "Couldn't read the releases from $REPO_URL" >&2; exit 1; }
+  uv tool install --force "git+$REPO_URL@$tag"
+  echo "claude-box $tag installed."
+}

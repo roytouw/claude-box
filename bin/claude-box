@@ -11,6 +11,7 @@
 #   claude-box profiles                      profiles (Claude homes) and which account is logged in
 #   claude-box trust <workspace>             trust the workspace and its repo folders in its profile
 #   claude-box gcloud-login <workspace>      log gcloud in for this workspace only (needs gcloud on)
+#   claude-box update                        install the newest release
 #
 # Starts `claude agents` (agent view: your sessions, start or resume background agents).
 #
@@ -46,7 +47,7 @@ profile=""; shell=0; chat=0; pull=0; ws=""; gcloud_login=0
 claude_args=()
 
 case "${1:-}" in
-  doctor|init|set|secret|list|profiles|trust)
+  doctor|init|set|secret|list|profiles|trust|update)
     # shellcheck source=../lib/commands.sh
     source "$BOX_DIR/lib/commands.sh"; sub="$1"; shift; "cmd_$sub" "$@"; exit $? ;;
   gcloud-login)   # a normal start of the workspace's box, running only the gcloud login
@@ -54,7 +55,7 @@ case "${1:-}" in
     [[ $# -eq 1 && "$1" != -* ]] || { echo "usage: claude-box gcloud-login <workspace>" >&2; exit 2; } ;;
 esac
 
-usage() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }   # the header comment above
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
