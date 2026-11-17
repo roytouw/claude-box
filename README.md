@@ -57,9 +57,15 @@ claude-box profiles                    # profiles and the Claude account in each
 
 ```sh
 claude-box myproject           # agent view in ~/claude-box/workspaces/myproject
-claude-box --chat myproject    # a plain new chat instead
-claude-box --shell myproject   # bash instead
+claude-box myproject --chat    # a plain new chat instead
+claude-box myproject --shell   # bash instead
+claude-box myproject --detached 'agent/run.sh'   # a script in the background, see Detached below
+claude-box -h                  # all commands; claude-box <command> -h for one
 ```
+
+Commands take the form `claude-box <command> <workspace> [args]`; starting a box is
+`claude-box <workspace> [options]` (options in any order). The workspace must exist: create it
+with `claude-box init` (only the default `scratch` is created on first use).
 
 Edit the code with any IDE on the host; the folder is mounted into the container. From inside the
 box, `code .` (or `!code .` in Claude, or `code <repo>/<file>`) opens that path in VS Code on your
@@ -81,10 +87,19 @@ always-on agent loop. The box keeps running after you close the terminal and Doc
 again after Docker Desktop or the Mac restarts (turn on Docker Desktop's *Start when you sign in*).
 
 ```sh
-claude-box myproject --detached 'agent/agent.sh start' --exit 'agent/agent.sh stop'
-docker logs -f claude-box-detached-myproject    # follow its output
-claude-box stop myproject                       # runs the --exit script, then stops the box
+claude-box myproject --detached 'agent/agent.sh run' --exit 'agent/agent.sh stop'
+claude-box status myproject     # running?, restarts, last output
+claude-box logs myproject       # follow its output (Ctrl+C stops following, not the box)
+claude-box stop myproject       # runs the --exit script, then stops the box
+claude-box list                 # the DETACHED column shows every workspace's
 ```
+
+**The script must stay in the foreground.** The box lives as long as the script: a script that
+starts its work in the background (`nohup … &`) and returns makes Docker restart it over and over
+(`Restarting (0)` in `docker ps`). Use the tool's foreground mode, `exec` the long-running
+command, or end the script with `wait`. The start command watches the first seconds: if the
+script exits, it shows its output and removes the box again. `claude-box doctor myproject` flags
+one that keeps exiting later.
 
 `--detached` and `--exit` each take one quoted string: a script path relative to the workspace
 plus its arguments, split on spaces (arguments can't contain spaces). `--exit` is optional and
@@ -106,7 +121,7 @@ log in with on its first start. Run two side by side with different accounts:
 
 ```sh
 claude-box myproject                 # profile "private"
-claude-box --profile acme teamstuff  # profile "acme", asks for a Claude login the first time
+claude-box teamstuff --profile acme  # profile "acme", asks for a Claude login the first time
 claude-box profiles                  # which account each profile is logged in to
 ```
 
