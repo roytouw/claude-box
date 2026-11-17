@@ -4,8 +4,8 @@
 # ///
 """claude-box MCP server: lets Claude set up and check claude-box workspaces for the user.
 
-A thin layer over the `claude-box` CLI (doctor, init, set, secret, list), so the CLI and this
-server always behave the same. No tool accepts or returns a secret value: secrets go from the
+A thin layer over the `claude-box` CLI (doctor, init, set, secret, trust, list, profiles, status,
+stop), so the CLI and this server always behave the same. No tool accepts or returns a secret value: secrets go from the
 user's clipboard straight into the macOS Keychain.
 
 Register it yourself (claude-box never does this for you):
@@ -98,6 +98,29 @@ Typical setup flow:
 When the user says a box doesn't work, run doctor on that workspace (list_workspaces if unsure
 which) and explain the problems and fixes in plain words.
 
+CLI shape, when you tell the user a command: `claude-box <command> <workspace> [args]` for the
+commands (init, set, secret, trust, gcloud-login, doctor, status, logs, stop), and
+`claude-box <workspace> [options]` to start a box. `claude-box <command> -h` shows one command's
+usage. A workspace must exist before it can start (create_workspace), except "scratch".
+
+Detached boxes (an always-on agent or any long-running script, without a terminal):
+- The user starts one themselves:
+    claude-box <workspace> --detached '<script> [args]' [--exit '<script> [args]']
+  Each is ONE quoted string: a script path relative to the workspace, then its arguments (split
+  on spaces; arguments can't contain spaces). --exit is optional: what `claude-box stop` runs in
+  the box first, e.g. --detached 'agent/agent.sh run' --exit 'agent/agent.sh stop'.
+- The script must stay in the FOREGROUND (exec its long-running process, or end with `wait`).
+  A script that starts something in the background and returns makes Docker restart it in a loop
+  ("Restarting (0)" in docker ps); the start command notices this in its first seconds, shows the
+  output and removes the box again. Help the user change the script, not claude-box.
+- It keeps running after the terminal closes and comes back when Docker Desktop restarts (with
+  Docker Desktop's "Start when you sign in" on, also after a Mac restart). It has the workspace's
+  secrets, settings and Docker daemon, but nothing that needs the Mac terminal (browser links,
+  clipboard, `code`). Secrets are read at start: after changing one, stop and start it again.
+- detached_status shows whether it runs, its restarts and its last output; doctor on the
+  workspace also flags one that keeps exiting. stop_detached stops it (only when the user asks).
+  To follow the output live, the user runs `claude-box logs <workspace>`.
+
 "Workspace not trusted" in a box (e.g. when sending an agent to a repo folder): trust is kept
 per folder in the workspace's profile. Offer trust_workspace; call it only when the user agrees,
 since trusting lets the repos' .claude/ settings and hooks run in the box.
@@ -143,7 +166,8 @@ def doctor(workspace: str | None = None) -> str:
 
 @mcp.tool()
 def list_workspaces() -> str:
-    """List the user's claude-box workspaces with profile, connectors, docker, gcloud and secrets status."""
+    """List the user's claude-box workspaces with profile, connectors, docker, gcloud, secrets status
+    and the state of their detached box (running, restarting, or - for none)."""
     return run("list")
 
 
@@ -247,6 +271,26 @@ def store_secret_from_clipboard(workspace: str, var: str) -> str:
     var is an env var name such as GH_TOKEN, GITLAB_TOKEN, JIRA_USERNAME or JIRA_API_TOKEN.
     """
     return run("secret", workspace, var)
+
+
+@mcp.tool()
+def detached_status(workspace: str) -> str:
+    """Show the workspace's detached box (started with `claude-box <ws> --detached '<script>'`):
+    running or not, since when, how often it restarted, the script and --exit script it runs, and
+    its last 20 lines of output. A box that restarts means its script doesn't stay in the
+    foreground. Changes nothing.
+    """
+    return run("status", workspace)
+
+
+@mcp.tool()
+def stop_detached(workspace: str) -> str:
+    """Stop the workspace's detached box: runs its --exit script in the box (if it has one, at
+    most 2 minutes), then gives the main script SIGTERM and 30 seconds to exit, and removes the
+    box. Only call it when the user asked to stop it. Starting one again is the user's command:
+    `claude-box <workspace> --detached '<script> [args]'`.
+    """
+    return run("stop", workspace)
 
 
 def main() -> None:

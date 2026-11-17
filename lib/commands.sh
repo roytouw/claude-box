@@ -1,4 +1,5 @@
-# claude-box subcommands: doctor, init, set, secret, list.
+# claude-box subcommands: init, set, secret, trust, doctor, list, profiles, status, logs, stop, update.
+# Their usage lines live in the header of bin/claude-box (shown by `claude-box <command> -h`).
 # Sourced by bin/claude-box (bash 3.2 compatible: macOS /bin/bash). Secret values are never printed.
 
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -139,10 +140,23 @@ doctor_system() {
   docker image inspect "$BASE_IMAGE" >/dev/null 2>&1 && ok "base image present" || warn "base image not pulled yet (happens on first start)"
 }
 
+# A detached box (if any) that keeps exiting is a problem; none at all is fine.
+doctor_detached() {
+  local status restarts code _
+  read -r status restarts code _ <<< "$(detached_state "$1")"
+  [[ -z "$status" ]] && return 0
+  if [[ "$status" == running && "$restarts" == 0 ]]; then
+    ok "detached box running"
+  else
+    bad "detached box keeps exiting ($status, restarted $restarts time(s), last status $code)"
+    hint "its script must stay in the foreground; see: claude-box status $1"
+  fi
+}
+
 doctor_workspace() {
   local ws="$1" d="$WS_ROOT/$1" cfg; cfg="$(ws_cfg "$1")"
   echo; echo "Workspace $ws"
-  [[ -d "$d" ]] || { bad "$d doesn't exist"; hint "create it: claude-box init <repo-url> $ws"; return; }
+  [[ -d "$d" ]] || { bad "$d doesn't exist"; hint "create it: claude-box init $ws <repo-url>"; return; }
   [[ -d "$cfg" ]] && ok ".claude-box/ present" || warn "no .claude-box/: runs on the plain base image without secrets"
   local p c k g; p="$(cfg_value "$ws" profile)"; c="$(cfg_value "$ws" connectors)"; k="$(cfg_value "$ws" docker)"; g="$(cfg_value "$ws" gcloud)"
   ok "profile ${p:-private} · connectors ${c:-off} · docker ${k:-off} · gcloud ${g:-off}"
@@ -197,7 +211,7 @@ doctor_workspace() {
 
 cmd_doctor() {
   doctor_system
-  if [[ -n "${1:-}" ]]; then need_ws "$1"; doctor_workspace "$1"; fi
+  if [[ -n "${1:-}" ]]; then need_ws "$1"; doctor_workspace "$1"; doctor_detached "$1"; fi
   echo
   if [[ $DOCTOR_PROBLEMS -eq 0 ]]; then echo "No problems found."; else echo "$DOCTOR_PROBLEMS problem(s) found; see the hints above."; fi
   [[ $DOCTOR_PROBLEMS -eq 0 ]]
@@ -351,13 +365,72 @@ cmd_set() {
 # --- list -----------------------------------------------------------------------------------------
 cmd_list() {
   [[ -d "$WS_ROOT" ]] || { echo "no workspaces yet ($WS_ROOT)"; return; }
-  printf '%-20s %-10s %-10s %-7s %-7s %s\n' WORKSPACE PROFILE CONNECTORS DOCKER GCLOUD SECRETS
+  printf '%-20s %-10s %-10s %-7s %-7s %-8s %s\n' WORKSPACE PROFILE CONNECTORS DOCKER GCLOUD SECRETS DETACHED
   for d in "$WS_ROOT"/*/; do
-    local ws total=0 have=0 p c k g; ws="$(basename "$d")"
+    local ws total=0 have=0 p c k g s; ws="$(basename "$d")"
     for var in $(secret_names "$ws"); do total=$((total + 1)); [[ -n "$(keychain "$ws" "$var")" ]] && have=$((have + 1)); done
     p="$(cfg_value "$ws" profile)"; c="$(cfg_value "$ws" connectors)"; k="$(cfg_value "$ws" docker)"; g="$(cfg_value "$ws" gcloud)"
-    printf '%-20s %-10s %-10s %-7s %-7s %s\n' "$ws" "${p:-private}" "${c:-off}" "${k:-off}" "${g:-off}" "$have/$total"
+    s="$(detached_state "$ws" | cut -d' ' -f1)"
+    printf '%-20s %-10s %-10s %-7s %-7s %-8s %s\n' "$ws" "${p:-private}" "${c:-off}" "${k:-off}" "${g:-off}" "$have/$total" "${s:--}"
   done
+}
+
+# --- detached boxes: status, logs, stop -----------------------------------------------------------
+detached_name()  { echo "claude-box-detached-$1"; }
+# "<status> <restarts> <exit code> <started at>", or nothing when there is no detached box.
+detached_state() {
+  docker inspect -f '{{.State.Status}} {{.RestartCount}} {{.State.ExitCode}} {{.State.StartedAt}}' \
+    "$(detached_name "$1")" 2>/dev/null || true
+}
+need_detached() {
+  need_ws "${1:-}"
+  [[ -n "$(detached_state "$1")" ]] || {
+    echo "$1 has no detached box; start one with: claude-box $1 --detached '<script> [args]'" >&2; exit 1; }
+}
+
+cmd_status() {
+  local ws="${1:-}"; need_detached "$ws"
+  local name status restarts code started cmd exit_cmd
+  name="$(detached_name "$ws")"
+  read -r status restarts code started <<< "$(detached_state "$ws")"
+  cmd="$(docker inspect -f '{{join .Config.Cmd " "}}' "$name" 2>/dev/null)"
+  exit_cmd="$(docker inspect -f '{{index .Config.Labels "claude-box.exit"}}' "$name" 2>/dev/null || true)"
+  echo "$ws: $status since ${started%.*}, restarted $restarts time(s)"
+  echo "  runs:    ${cmd##*"/workspace/$ws/"}"
+  [[ -n "$exit_cmd" ]] && echo "  on stop: ${exit_cmd#"/workspace/$ws/"}"
+  if [[ "$status" != running || "$restarts" != 0 ]]; then
+    echo "  ! the script exited (last status $code). A detached script must stay in the foreground;"
+    echo "    when it returns, Docker starts it again. See its output below or with: claude-box logs $ws"
+  fi
+  echo "--- last output"
+  docker logs --tail 20 "$name" 2>&1 | sed 's/^/  /'
+  [[ "$status" == running && "$restarts" == 0 ]]
+}
+
+cmd_logs() {
+  local ws="${1:-}"; need_detached "$ws"
+  echo "[claude-box] following $ws (Ctrl+C stops following; the box keeps running)" >&2
+  exec docker logs -f --tail 100 "$(detached_name "$ws")"
+}
+
+# The --exit script (if any) runs in the box first; its words were checked at start. Then the
+# main script gets SIGTERM and 30s to exit, and the box is removed (and its private Docker daemon,
+# when nothing else uses it, as when a box exits).
+cmd_stop() {
+  local ws="${1:-}"; need_detached "$ws"
+  local name exit_cmd words; name="$(detached_name "$ws")"
+  exit_cmd="$(docker inspect -f '{{index .Config.Labels "claude-box.exit"}}' "$name" 2>/dev/null || true)"
+  if [[ -n "$exit_cmd" && "$(docker inspect -f '{{.State.Running}}' "$name")" == "true" ]]; then
+    read -ra words <<< "$exit_cmd"
+    echo "[claude-box] running ${exit_cmd#"/workspace/$ws/"}" >&2
+    docker exec "$name" timeout 120 "${words[@]}" \
+      || echo "[claude-box] exit script failed (status $?); stopping anyway" >&2
+  fi
+  docker stop -t 30 "$name" >/dev/null && docker rm "$name" >/dev/null
+  if [[ -z "$(docker ps -q --filter "label=claude-box.uses-dind=claude-box-dind-$ws")" ]]; then
+    docker rm -f "claude-box-dind-$ws" >/dev/null 2>&1 || true
+  fi
+  echo "stopped $ws"
 }
 
 # --- trust: accept Claude's folder trust prompt for a workspace and its repos, in its profile ------
