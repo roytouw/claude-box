@@ -83,14 +83,18 @@ again after Docker Desktop or the Mac restarts (turn on Docker Desktop's *Start 
 ```sh
 claude-box --detached scripts/agent.sh myproject -- --some-arg   # path relative to the workspace
 docker logs -f claude-box-detached-myproject                       # follow its output
-docker rm -f claude-box-detached-myproject                         # stop it
+claude-box stop myproject                                          # stop it
 ```
+
+`claude-box stop` sends the script SIGTERM and gives it 30 seconds to exit before it is killed, so a
+script can clean up with e.g. `trap 'cleanup; exit 0' TERM`. It then removes the container (and the
+workspace's Docker daemon, if nothing else uses it).
 
 The script must be an executable file inside the workspace (not a symlink). One detached box per
 workspace. It gets the same secrets, settings, profile and Docker daemon as a normal box, but no
 Mac bridge: no links opened in your browser, no clipboard, no `code`. Secrets are read from the
 Keychain when it starts and kept in the container's config across restarts; after changing one,
-stop it and start it again.
+`claude-box stop` it and start it again.
 
 **Profiles** keep accounts apart. A profile is a named Docker volume with its own Claude login,
 plugins and memory (`private` by default). The name is only a label: the account is whatever you
