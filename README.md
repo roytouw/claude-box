@@ -76,6 +76,22 @@ images are shared that way, never clipboard text, but anything in the box can as
 clipboard image while the box runs. Links the box opens go to your Mac's browser, and copying in
 the box (`xclip`) reaches your Mac clipboard.
 
+**Detached**: run a script from the workspace in the background instead of Claude, e.g. an
+always-on agent loop. The box keeps running after you close the terminal and Docker starts it
+again after Docker Desktop or the Mac restarts (turn on Docker Desktop's *Start when you sign in*).
+
+```sh
+claude-box --detached scripts/agent.sh myproject -- --some-arg   # path relative to the workspace
+docker logs -f claude-box-detached-myproject                       # follow its output
+docker rm -f claude-box-detached-myproject                         # stop it
+```
+
+The script must be an executable file inside the workspace (not a symlink). One detached box per
+workspace. It gets the same secrets, settings, profile and Docker daemon as a normal box, but no
+Mac bridge: no links opened in your browser, no clipboard, no `code`. Secrets are read from the
+Keychain when it starts and kept in the container's config across restarts; after changing one,
+stop it and start it again.
+
 **Profiles** keep accounts apart. A profile is a named Docker volume with its own Claude login,
 plugins and memory (`private` by default). The name is only a label: the account is whatever you
 log in with on its first start. Run two side by side with different accounts:
