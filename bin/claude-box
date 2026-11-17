@@ -11,6 +11,7 @@
 #   claude-box profiles                      profiles (Claude homes) and which account is logged in
 #   claude-box trust <workspace>             trust the workspace and its repo folders in its profile
 #   claude-box gcloud-login <workspace>      log gcloud in for this workspace only (needs gcloud on)
+#   claude-box stop <workspace>              stop the workspace's --detached box
 #   claude-box update                        install the newest release
 #
 # Starts `claude agents` (agent view: your sessions, start or resume background agents).
@@ -36,7 +37,7 @@
 #   --detached S   run script S (a path in the workspace, executable) in the background instead
 #                  of claude; it keeps running and restarts with Docker. Arguments after -- go to
 #                  the script. Logs: docker logs -f claude-box-detached-<workspace>
-#                  Stop: docker rm -f claude-box-detached-<workspace>
+#                  Stop: claude-box stop <workspace>
 #   --profile P    home volume to use (Claude login, plugins, memory); overrides .claude-box/profile
 #   --pull         pull the latest base image first
 #   --build-base   build the base image locally from this repo, then exit
@@ -57,6 +58,19 @@ case "${1:-}" in
   gcloud-login)   # a normal start of the workspace's box, running only the gcloud login
     gcloud_login=1; shift
     [[ $# -eq 1 && "$1" != -* ]] || { echo "usage: claude-box gcloud-login <workspace>" >&2; exit 2; } ;;
+  stop)   # stop a box started with --detached (the script gets SIGTERM and 30s to exit)
+    shift
+    [[ $# -eq 1 && "$1" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "usage: claude-box stop <workspace>" >&2; exit 2; }
+    name="claude-box-detached-$1"
+    if ! docker container inspect "$name" >/dev/null 2>&1; then
+      echo "$1 is not running detached" >&2; exit 1
+    fi
+    docker stop -t 30 "$name" >/dev/null && docker rm "$name" >/dev/null
+    # Its private Docker daemon goes when nothing else uses it, as when a box exits.
+    if [[ -z "$(docker ps -q --filter "label=claude-box.uses-dind=claude-box-dind-$1")" ]]; then
+      docker rm -f "claude-box-dind-$1" >/dev/null 2>&1 || true
+    fi
+    echo "stopped $1"; exit 0 ;;
 esac
 
 usage() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }   # the header comment above
@@ -100,7 +114,7 @@ if [[ -n "$detached" ]]; then
   [[ "$real" == "$(cd "$ws_path" && pwd -P)/"* ]] || { echo "script must be inside the workspace: $rel" >&2; exit 2; }
   [[ -x "$script" ]] || { echo "script is not executable; run: chmod +x $script" >&2; exit 2; }
   if [[ -n "$(docker ps -q --filter "name=^/${detached_container}\$")" ]]; then
-    echo "$ws already runs detached; stop it first: docker rm -f $detached_container" >&2; exit 1
+    echo "$ws already runs detached; stop it first: claude-box stop $ws" >&2; exit 1
   fi
 fi
 
@@ -410,7 +424,7 @@ if [[ -n "$detached" ]]; then
   run_mode=(-d --restart unless-stopped --name "$detached_container")
   echo "[claude-box] running $rel detached in $ws" >&2
   echo "[claude-box]   logs: docker logs -f $detached_container" >&2
-  echo "[claude-box]   stop: docker rm -f $detached_container" >&2
+  echo "[claude-box]   stop: claude-box stop $ws" >&2
 fi
 docker run "${run_mode[@]}" --init \
   "${net_args[@]}" \
