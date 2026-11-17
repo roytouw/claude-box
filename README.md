@@ -81,16 +81,20 @@ always-on agent loop. The box keeps running after you close the terminal and Doc
 again after Docker Desktop or the Mac restarts (turn on Docker Desktop's *Start when you sign in*).
 
 ```sh
-claude-box --detached scripts/agent.sh myproject -- --some-arg   # path relative to the workspace
-docker logs -f claude-box-detached-myproject                       # follow its output
-claude-box stop myproject                                          # stop it
+claude-box myproject --detached 'agent/agent.sh start' --exit 'agent/agent.sh stop'
+docker logs -f claude-box-detached-myproject    # follow its output
+claude-box stop myproject                       # runs the --exit script, then stops the box
 ```
 
-`claude-box stop` sends the script SIGTERM and gives it 30 seconds to exit before it is killed, so a
-script can clean up with e.g. `trap 'cleanup; exit 0' TERM`. It then removes the container (and the
-workspace's Docker daemon, if nothing else uses it).
+`--detached` and `--exit` each take one quoted string: a script path relative to the workspace
+plus its arguments, split on spaces (arguments can't contain spaces). `--exit` is optional and
+remembered on the container. `claude-box stop` runs it in the box (at most 2 minutes), then sends
+the main script SIGTERM and gives it 30 seconds to exit before it is killed, so a script can also
+clean up itself with e.g. `trap 'cleanup; exit 0' TERM`. It then removes the container (and the
+workspace's Docker daemon, if nothing else uses it). The `--exit` script doesn't run when Docker
+Desktop or the Mac shuts down; only the SIGTERM does.
 
-The script must be an executable file inside the workspace (not a symlink). One detached box per
+Scripts must be executable files inside the workspace (not symlinks). One detached box per
 workspace. It gets the same secrets, settings, profile and Docker daemon as a normal box, but no
 Mac bridge: no links opened in your browser, no clipboard, no `code`. Secrets are read from the
 Keychain when it starts and kept in the container's config across restarts; after changing one,
