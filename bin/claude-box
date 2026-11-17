@@ -11,6 +11,7 @@
 #   claude-box profiles                      profiles (Claude homes) and which account is logged in
 #   claude-box trust <workspace>             trust the workspace and its repo folders in its profile
 #   claude-box gcloud-login <workspace>      log gcloud in for this workspace only (needs gcloud on)
+#   claude-box stop <workspace>              stop the workspace's --detached box
 #   claude-box update                        install the newest release
 #
 # Starts `claude agents` (agent view: your sessions, start or resume background agents).
@@ -33,10 +34,11 @@
 # Options:
 #   --chat         start a plain new `claude` chat instead of agent view
 #   --shell        open bash in the box instead of claude
-#   --detached S   run script S (a path in the workspace, executable) in the background instead
-#                  of claude; it keeps running and restarts with Docker. Arguments after -- go to
-#                  the script. Logs: docker logs -f claude-box-detached-<workspace>
-#                  Stop: docker rm -f claude-box-detached-<workspace>
+#   --detached 'S [args]'  run script S (an executable path in the workspace) with its args in the
+#                  background instead of claude; it keeps running and restarts with Docker.
+#                  Logs: docker logs -f claude-box-detached-<workspace>
+#                  Stop: claude-box stop <workspace>
+#   --exit 'S [args]'  with --detached: script that `claude-box stop` runs in the box first
 #   --profile P    home volume to use (Claude login, plugins, memory); overrides .claude-box/profile
 #   --pull         pull the latest base image first
 #   --build-base   build the base image locally from this repo, then exit
@@ -47,7 +49,7 @@ BOX_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 BASE_IMAGE="ghcr.io/roytouw/claude-box:base"
 WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
 
-profile=""; shell=0; chat=0; pull=0; ws=""; gcloud_login=0; detached=""
+profile=""; shell=0; chat=0; pull=0; ws=""; gcloud_login=0; detached=""; exit_cmd=""
 claude_args=()
 
 case "${1:-}" in
@@ -57,6 +59,27 @@ case "${1:-}" in
   gcloud-login)   # a normal start of the workspace's box, running only the gcloud login
     gcloud_login=1; shift
     [[ $# -eq 1 && "$1" != -* ]] || { echo "usage: claude-box gcloud-login <workspace>" >&2; exit 2; } ;;
+  stop)   # stop a box started with --detached (the script gets SIGTERM and 30s to exit)
+    shift
+    [[ $# -eq 1 && "$1" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "usage: claude-box stop <workspace>" >&2; exit 2; }
+    name="claude-box-detached-$1"
+    if ! docker container inspect "$name" >/dev/null 2>&1; then
+      echo "$1 is not running detached" >&2; exit 1
+    fi
+    # The --exit script (if any) runs in the box first; its words were checked at start.
+    exit_cmd="$(docker inspect -f '{{index .Config.Labels "claude-box.exit"}}' "$name" 2>/dev/null || true)"
+    if [[ -n "$exit_cmd" && "$(docker inspect -f '{{.State.Running}}' "$name")" == "true" ]]; then
+      read -ra exit_words <<< "$exit_cmd"
+      echo "[claude-box] running ${exit_cmd#"/workspace/$1/"}" >&2
+      docker exec "$name" timeout 120 "${exit_words[@]}" \
+        || echo "[claude-box] exit script failed (status $?); stopping anyway" >&2
+    fi
+    docker stop -t 30 "$name" >/dev/null && docker rm "$name" >/dev/null
+    # Its private Docker daemon goes when nothing else uses it, as when a box exits.
+    if [[ -z "$(docker ps -q --filter "label=claude-box.uses-dind=claude-box-dind-$1")" ]]; then
+      docker rm -f "claude-box-dind-$1" >/dev/null 2>&1 || true
+    fi
+    echo "stopped $1"; exit 0 ;;
 esac
 
 usage() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }   # the header comment above
@@ -66,8 +89,10 @@ while [[ $# -gt 0 ]]; do
     --chat) chat=1 ;;
     --shell) shell=1 ;;
     --profile) profile="$2"; shift ;;
-    --detached) [[ $# -ge 2 && -n "$2" ]] || { echo "--detached needs a script path" >&2; exit 2; }
-                detached="$2"; shift ;;
+    --detached|--exit)
+      [[ $# -ge 2 && -n "$2" ]] || { echo "$1 needs a script path" >&2; exit 2; }
+      if [[ "$1" == --detached ]]; then detached="$2"; else exit_cmd="$2"; fi
+      shift ;;
     --pull) pull=1 ;;
     --build-base) docker build --pull -t "$BASE_IMAGE" "$BOX_DIR/image"; exit 0 ;;
     -h|--help) usage; exit 0 ;;
@@ -86,21 +111,38 @@ ws_path="$WS_ROOT/$ws"
 cfg="$ws_path/.claude-box"
 
 # --- detached: a script from the workspace, running in the background --------------------------
-# The script is a regular file inside the workspace folder (given relative to it, or as
-# /workspace/<ws>/...), so only what is in the workspace can run this way.
-detached_container="claude-box-detached-${ws}"
-if [[ -n "$detached" ]]; then
-  [[ $shell -eq 0 && $chat -eq 0 && $gcloud_login -eq 0 ]] \
-    || { echo "--detached can't be combined with --shell or --chat" >&2; exit 2; }
-  rel="${detached#"/workspace/$ws/"}"; rel="${rel#./}"
-  [[ "$rel" != /* ]] || { echo "script must be a path inside the workspace, got: $detached" >&2; exit 2; }
+# --detached and --exit each take one string: a script path and its arguments, split on spaces
+# (so arguments can't contain spaces). The script is a regular file inside the workspace folder
+# (given relative to it, or as /workspace/<ws>/...), so only what is in the workspace can run.
+workspace_script() {   # "<path> [args]" -> script_cmd=(/workspace/<ws>/<path> args...), or exits
+  local words rel script real
+  read -ra words <<< "$1"
+  [[ ${#words[@]} -gt 0 ]] || { echo "empty script command" >&2; exit 2; }
+  rel="${words[0]#"/workspace/$ws/"}"; rel="${rel#./}"
+  [[ "$rel" != /* ]] || { echo "script must be a path inside the workspace, got: ${words[0]}" >&2; exit 2; }
   script="$ws_path/$rel"
   [[ -f "$script" && ! -L "$script" ]] || { echo "no such script in $ws (or it is a symlink): $rel" >&2; exit 2; }
   real="$(cd "$(dirname "$script")" && pwd -P)/$(basename "$script")"
   [[ "$real" == "$(cd "$ws_path" && pwd -P)/"* ]] || { echo "script must be inside the workspace: $rel" >&2; exit 2; }
   [[ -x "$script" ]] || { echo "script is not executable; run: chmod +x $script" >&2; exit 2; }
+  script_cmd=("/workspace/$ws/$rel" "${words[@]:1}")
+}
+detached_container="claude-box-detached-${ws}"
+if [[ -n "$exit_cmd" && -z "$detached" ]]; then
+  echo "--exit only works together with --detached" >&2; exit 2
+fi
+if [[ -n "$detached" ]]; then
+  [[ $shell -eq 0 && $chat -eq 0 && $gcloud_login -eq 0 ]] \
+    || { echo "--detached can't be combined with --shell or --chat" >&2; exit 2; }
+  workspace_script "$detached"
+  detached_cmd=("${script_cmd[@]}" "${claude_args[@]+"${claude_args[@]}"}")
+  exit_label=()
+  if [[ -n "$exit_cmd" ]]; then
+    workspace_script "$exit_cmd"
+    exit_label=(--label "claude-box.exit=${script_cmd[*]}")
+  fi
   if [[ -n "$(docker ps -q --filter "name=^/${detached_container}\$")" ]]; then
-    echo "$ws already runs detached; stop it first: docker rm -f $detached_container" >&2; exit 1
+    echo "$ws already runs detached; stop it first: claude-box stop $ws" >&2; exit 1
   fi
 fi
 
@@ -201,7 +243,7 @@ if [[ ${#git_cfg[@]} -gt 0 ]]; then
 fi
 
 if [[ -n "$detached" ]]; then
-  cmd=("/workspace/$ws/$rel" "${claude_args[@]+"${claude_args[@]}"}")
+  cmd=("${detached_cmd[@]}")
 elif [[ $gcloud_login -eq 1 ]]; then
   # Opens the sign-in in the Mac's browser; the bridge relays its localhost redirect into the box.
   cmd=(gcloud auth login --update-adc)
@@ -407,10 +449,11 @@ run_mode=(--rm -it --name "$container")
 if [[ -n "$detached" ]]; then
   # No --rm: Docker keeps it and starts it again when Docker Desktop (or the Mac) restarts.
   docker rm -f "$detached_container" >/dev/null 2>&1 || true   # a stopped one from before
-  run_mode=(-d --restart unless-stopped --name "$detached_container")
-  echo "[claude-box] running $rel detached in $ws" >&2
+  run_mode=(-d --restart unless-stopped --name "$detached_container" "${exit_label[@]+"${exit_label[@]}"}")
+  echo "[claude-box] running ${detached_cmd[*]#"/workspace/$ws/"} detached in $ws" >&2
+  [[ ${#exit_label[@]} -gt 0 ]] && echo "[claude-box]   on stop: ${exit_label[1]#"claude-box.exit=/workspace/$ws/"}" >&2
   echo "[claude-box]   logs: docker logs -f $detached_container" >&2
-  echo "[claude-box]   stop: docker rm -f $detached_container" >&2
+  echo "[claude-box]   stop: claude-box stop $ws" >&2
 fi
 docker run "${run_mode[@]}" --init \
   "${net_args[@]}" \
