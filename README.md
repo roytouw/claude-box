@@ -5,8 +5,8 @@ The container only sees the project folder and its own home volume: no host `~/.
 (plugins, skills, memory), no SSH keys, no git, gh or glab config. Secrets come from your macOS
 Keychain at start-up and are never baked into an image.
 
-The base image has Claude Code, git, gh, glab, uv, the Docker CLI, kubectl and k9s. The Google
-Cloud CLI is opt-in per workspace (see [Google Cloud](#google-cloud-opt-in)).
+The base image has Claude Code, git, gh, glab, uv, the Docker CLI, kubectl, k9s and grpcurl. The
+Google Cloud CLI is opt-in per workspace (see [Google Cloud](#google-cloud-opt-in)).
 
 ## Install
 

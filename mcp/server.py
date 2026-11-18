@@ -65,8 +65,8 @@ Typical setup flow:
      terminal color (dark enough for white text).
    - Whether the project uses Google Cloud (GCP, GKE, Cloud Run, gcloud in scripts or CI; look
      for hints such as cloudbuild.yaml or gcloud in the repos). If yes: gcloud=True, and ask for
-     the default GCP project to set as env CLOUDSDK_CORE_PROJECT. kubectl and k9s are always in
-     the box; nothing to turn on for them.
+     the default GCP project to set as env CLOUDSDK_CORE_PROJECT. kubectl, k9s and grpcurl are always
+     in the box; nothing to turn on for them.
    - Git identity (always): the name and email for commits in the box (git_name, git_email).
      The email must be a verified email on the user's account at the repo host (GitHub/GitLab),
      often a client address for client work. doctor shows the Mac's git identity; offer it as a
