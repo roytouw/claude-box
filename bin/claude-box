@@ -437,7 +437,23 @@ if [[ "$(setting docker)" == "on" ]]; then
              --label "claude-box.uses-dind=$dind_name")
 fi
 
+# --- port-forwards: kubectl/k9s port-forwards in the box -> localhost on the Mac ------------------
+# The box publishes no ports; a helper on the Mac mirrors the ports kubectl/k9s listen on inside
+# it (on 127.0.0.1 only) and relays each connection with `docker exec`. See lib/port-forward.py.
+# A detached box outlives this script, so it gets none (like the bridge).
+fwd_pid=""
+fwd_py=()
+if [[ -n "${CLAUDE_BOX_PYTHON:-}" ]]; then fwd_py=("$CLAUDE_BOX_PYTHON")   # the uv-installed command
+elif command -v uv >/dev/null 2>&1; then fwd_py=(uv run -q --no-project python)
+fi
+if [[ -z "$detached" && ${#fwd_py[@]} -gt 0 ]]; then
+  "${fwd_py[@]}" "$BOX_DIR/lib/port-forward.py" "$container" </dev/null >/dev/null 2>&1 &
+  fwd_pid=$!
+  disown "$fwd_pid"
+fi
+
 cleanup() {
+  [[ -n "$fwd_pid" ]] && kill "$fwd_pid" 2>/dev/null
   if [[ ${#dind_args[@]} -gt 0 && -z "$(docker ps -q --filter "label=claude-box.uses-dind=$dind_name")" ]]; then
     docker rm -f "$dind_name" >/dev/null 2>&1
   fi

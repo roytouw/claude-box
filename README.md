@@ -240,6 +240,17 @@ account or project with only the access the work needs. For GKE, run
 `gcloud container clusters get-credentials <cluster>` in the box and kubectl/k9s work. To log
 out, remove the volume: `docker volume rm claude-box-gcloud-<workspace>`.
 
+## Port-forwards (kubectl, k9s)
+
+A `kubectl port-forward` or k9s port-forward in the box also opens on your Mac: forward
+`svc/web 8080:80` in the box and `http://localhost:8080` works in your Mac's browser. The launcher
+watches which ports kubectl and k9s listen on inside the box, listens on the same port on the
+Mac's `127.0.0.1` (never other interfaces) and relays each connection into the box with
+`docker exec`; nothing is published, so boxes don't fight over ports. The Mac port closes when the
+forward stops. A port already in use on the Mac is skipped and picked up once it's free;
+`/tmp/claude-box-ports` in the box lists what is forwarded, so Claude can tell you the URL. Boxes
+started with `--detached` don't get this.
+
 ## Troubleshooting
 
 **"Workspace not trusted"** when sending an agent to a repo folder: trust is kept per folder in the
