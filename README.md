@@ -46,7 +46,7 @@ claude-box init <name> <url>           # add a repo to that workspace (also list
 claude-box secret <name> GITLAB_TOKEN  # copy the token first: stores the clipboard, checks it, clears it
 claude-box set <name> git-email jane@acme.com   # git identity (also: git-name "Jane Doe")
 claude-box set <name> signing on       # signed commits: makes an SSH signing key, shows where to add it
-claude-box set <name> docker on        # profile | connectors | docker | gcloud | color | env
+claude-box set <name> docker on        # profile | connectors | docker | gcloud | sync | color | env
 claude-box gcloud-login <name>         # with gcloud on: log gcloud in for this workspace only
 claude-box doctor <name>               # checks remotes, secrets (against GitHub/GitLab/Jira), image
 claude-box list                        # all workspaces
@@ -144,6 +144,7 @@ can't change the repos (see [multi-repo example](examples/multi-repo-github-gitl
   connectors   "on" to allow the Claude account's claude.ai connectors (off by default)
   docker       "on" to give the box its own private Docker daemon (off by default, see below)
   gcloud       "on" to add the Google Cloud CLI, logged in per workspace (off by default, see below)
+  sync         "off" to stop updating the repos when a box starts (on by default, see below)
   color        terminal background while the box runs, e.g. #6E2A0C
   git-name     git user.name in the box, e.g. Jane Doe
   git-email    git user.email in the box (verified on your GitHub/GitLab account)
@@ -174,6 +175,23 @@ Scope the tokens so an agent can only touch what you pick:
   it may edit `.github/workflows`), expiry 90 days.
 - **GitLab**: personal or group access token with `read_repository` + `write_repository`
   (add `api` for `glab` merge requests), with an expiry date.
+
+### Repos are brought up to date on start
+
+Every start fetches `origin` for each repo in the workspace (in parallel, on the Mac, with the
+workspace's tokens; at most 10 seconds), so Claude doesn't start working on an old `main`. A repo
+is only fast-forwarded when nothing can be lost: it is on its default branch, tracking it, with no
+local commits on top and no uncommitted changes. Anything else is left alone and reported:
+
+```
+[claude-box] web-app: updated main with 3 new commits from origin/main
+[claude-box] shared-lib: feat/x is 2 commits behind origin/feat/x (not the default branch), left alone
+[claude-box] service-api: main is 5 commits behind origin/main but has uncommitted changes, left alone
+```
+
+Nothing is printed when every repo is current, and a failed fetch (offline, missing token) never
+stops the box. Skip it once with `claude-box <workspace> --no-sync`, or for good with
+`claude-box set <workspace> sync off`.
 
 ## Git identity and signed commits
 

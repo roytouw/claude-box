@@ -205,6 +205,7 @@ def configure_workspace(
     connectors: bool | None = None,
     docker: bool | None = None,
     gcloud: bool | None = None,
+    sync: bool | None = None,
     git_name: str | None = None,
     git_email: str | None = None,
     signing: bool | None = None,
@@ -221,6 +222,8 @@ def configure_workspace(
       Docker Desktop VM, so only when the project needs Docker).
     gcloud: add the Google Cloud CLI (with the GKE auth plugin) to the box, logged in per
       workspace (off by default). The user then logs in with `claude-box gcloud-login <ws>`.
+    sync: on start, fetch the repos and fast-forward the ones on their default branch without
+      local changes (on by default). Only turn it off when the user asks.
     git_name, git_email: git identity for commits in the box. The email must be verified on the
       user's GitHub/GitLab account.
     signing: sign commits and tags with an SSH key made for this workspace (off by default;
@@ -238,6 +241,8 @@ def configure_workspace(
         results.append(run("set", workspace, "docker", "on" if docker else "off"))
     if gcloud is not None:
         results.append(run("set", workspace, "gcloud", "on" if gcloud else "off"))
+    if sync is not None:
+        results.append(run("set", workspace, "sync", "on" if sync else "off"))
     if git_name is not None:
         results.append(run("set", workspace, "git-name", git_name))
     if git_email is not None:
