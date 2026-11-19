@@ -1,6 +1,7 @@
 # claude-box subcommands: init, set, secret, trust, doctor, list, profiles, status, logs, stop, update.
 # Their usage lines live in the header of bin/claude-box (shown by `claude-box <command> -h`).
 # Sourced by bin/claude-box (bash 3.2 compatible: macOS /bin/bash). Secret values are never printed.
+# Also sourced when a box starts, for sync_repos (bringing the workspace's repos up to date).
 
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; DOCTOR_PROBLEMS=$((DOCTOR_PROBLEMS + 1)); }
@@ -158,8 +159,9 @@ doctor_workspace() {
   echo; echo "Workspace $ws"
   [[ -d "$d" ]] || { bad "$d doesn't exist"; hint "create it: claude-box init $ws <repo-url>"; return; }
   [[ -d "$cfg" ]] && ok ".claude-box/ present" || warn "no .claude-box/: runs on the plain base image without secrets"
-  local p c k g; p="$(cfg_value "$ws" profile)"; c="$(cfg_value "$ws" connectors)"; k="$(cfg_value "$ws" docker)"; g="$(cfg_value "$ws" gcloud)"
-  ok "profile ${p:-private} · connectors ${c:-off} · docker ${k:-off} · gcloud ${g:-off}"
+  local p c k g y; p="$(cfg_value "$ws" profile)"; c="$(cfg_value "$ws" connectors)"; k="$(cfg_value "$ws" docker)"; g="$(cfg_value "$ws" gcloud)"
+  y="$(cfg_value "$ws" sync)"
+  ok "profile ${p:-private} · connectors ${c:-off} · docker ${k:-off} · gcloud ${g:-off} · sync ${y:-on}"
   if [[ "$g" == on ]]; then
     # The login lives in the workspace's gcloud volume; read the account without starting gcloud.
     local acct=""
@@ -336,6 +338,8 @@ cmd_set() {
              if [[ "$val" == private ]]; then rm -f "$cfg/profile"; else echo "$val" > "$cfg/profile"; fi ;;
     connectors|docker|gcloud)
              case "$val" in on) echo on > "$cfg/$key" ;; off) rm -f "$cfg/$key" ;; *) echo "$key must be on or off" >&2; exit 2 ;; esac ;;
+    sync)    # on by default, so only "off" is written
+             case "$val" in on) rm -f "$cfg/sync" ;; off) echo off > "$cfg/sync" ;; *) echo "sync must be on or off" >&2; exit 2 ;; esac ;;
     git-name) val="${*:3}"   # unquoted "Jane Doe" arrives as two arguments
              [[ -n "$val" ]] || { echo "usage: claude-box set <workspace> git-name \"Jane Doe\"" >&2; exit 2; }
              echo "$val" > "$cfg/git-name" ;;
@@ -354,7 +358,7 @@ cmd_set() {
     env)     [[ "$val" =~ ^[A-Z_][A-Z0-9_]*=.*$ ]] || { echo "env must be KEY=value" >&2; exit 2; }
              local k="${val%%=*}"; touch "$cfg/env"
              grep -v "^$k=" "$cfg/env" > "$cfg/env.tmp" || true; echo "$val" >> "$cfg/env.tmp"; mv "$cfg/env.tmp" "$cfg/env" ;;
-    *) echo "usage: claude-box set <workspace> profile|connectors|docker|gcloud|git-name|git-email|signing|color|env <value>" >&2; exit 2 ;;
+    *) echo "usage: claude-box set <workspace> profile|connectors|docker|gcloud|sync|git-name|git-email|signing|color|env <value>" >&2; exit 2 ;;
   esac
   echo "$ws: $key = $val"
   [[ "$key" == signing && "$val" == on ]] && signing_key_instructions "$ws"
@@ -582,6 +586,76 @@ clone_into() {  # $1 dir, $2 https url, $3 workspace
     rm -rf "$dir/.git"; rmdir "$dir" 2>/dev/null || true
     return 1
   fi
+}
+
+# --- sync: bring the workspace's repos up to date when a box starts ------------------------------
+# Fetches origin of every repo in parallel (at most SYNC_TIMEOUT seconds), then fast-forwards a repo
+# only when nothing can be lost: it is on its default branch, tracking it, without local commits on
+# top and without uncommitted changes to tracked files. Anything else (a feature branch, work in
+# progress on the Mac or in another box) is left alone and reported in one line, so Claude knows it
+# is behind. Silent when everything is current. Never fails or blocks the start for long.
+# Off for a workspace with .claude-box/sync = off, or for one start with --no-sync.
+SYNC_TIMEOUT=10
+token_var_for() {  # $1 ws, $2 https url -> GH_TOKEN, GITLAB_TOKEN or nothing
+  local h; h="$(url_host "$2")"
+  if [[ "$h" == "$(gitlab_host_for "$1")" ]]; then echo GITLAB_TOKEN; else host_var "$h"; fi
+}
+plural() { if [[ "$1" -eq 1 ]]; then echo "$1 $2"; else echo "$1 ${2}s"; fi; }
+sync_repo() {  # $1 ws, $2 repo dir -> at most one line about it
+  local ws="$1" r="$2" name url var="" tok="" user=x-access-token pid i
+  name="${r#"$WS_ROOT/"}"
+  url="$(git -C "$r" remote get-url origin 2>/dev/null)" || return 0
+  if [[ "$url" == https://* ]]; then
+    var="$(token_var_for "$ws" "$url")"; [[ "$var" == GITLAB_TOKEN ]] && user=oauth2
+    [[ -n "$var" ]] && tok="$(keychain "$ws" "$var")"
+  fi
+  # SSH remotes (the Mac has keys, the box doesn't): never wait for a passphrase or host prompt.
+  ( export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=5"
+    git_remote "$r" "$user" "$tok" fetch -q origin ) >/dev/null 2>&1 &
+  pid=$!; tok=""
+  for ((i = 0; i < SYNC_TIMEOUT * 5; i++)); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
+  if kill -0 "$pid" 2>/dev/null; then
+    pkill -P "$pid" 2>/dev/null || true; kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    echo "$name: fetching origin timed out (offline?), not updated"; return 0
+  fi
+  if ! wait "$pid"; then
+    echo "$name: couldn't fetch origin${var:+ (is $var set? claude-box doctor $ws)}, not updated"; return 0
+  fi
+
+  local branch up def behind ahead
+  branch="$(git -C "$r" symbolic-ref -q --short HEAD)" || return 0          # detached HEAD, e.g. mid-rebase
+  up="$(git -C "$r" rev-parse -q --abbrev-ref '@{u}' 2>/dev/null)" || return 0   # no upstream: nothing to compare
+  behind="$(git -C "$r" rev-list --count "HEAD..@{u}")"
+  [[ "$behind" -gt 0 ]] || return 0
+  ahead="$(git -C "$r" rev-list --count "@{u}..HEAD")"
+  def="$(git -C "$r" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || def=""
+  if [[ -z "$def" ]]; then   # origin/HEAD unknown (cloned without it): main or master
+    for def in origin/main origin/master ""; do git -C "$r" rev-parse -q --verify "$def" >/dev/null && break; done
+  fi
+  local state="$branch is $(plural "$behind" "commit") behind $up"
+  if [[ "$up" != "$def" ]]; then
+    echo "$name: $state (not the default branch), left alone"
+  elif [[ "$ahead" -gt 0 ]]; then
+    echo "$name: $state and has $(plural "$ahead" "local commit"), left alone"
+  elif [[ -n "$(git --no-optional-locks -C "$r" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+    echo "$name: $state but has uncommitted changes, left alone"
+  elif git -C "$r" merge -q --ff-only '@{u}' >/dev/null 2>&1; then
+    echo "$name: updated $branch with $(plural "$behind" "new commit") from $up"
+  else
+    echo "$name: $state; fast-forward failed (untracked files in the way?), left alone"
+  fi
+}
+sync_repos() {  # $1 ws; prints a line per repo that was updated or is behind, to stderr
+  local ws="$1" repos r tmp n=0 j pids=()
+  repos="$(ws_repos "$ws")"; [[ -n "$repos" ]] || return 0
+  tmp="$(mktemp -d)"
+  while IFS= read -r r; do
+    sync_repo "$ws" "$r" > "$tmp/$n" 2>/dev/null &
+    pids+=($!); n=$((n + 1))
+  done <<< "$repos"
+  for j in "${pids[@]}"; do wait "$j" || true; done
+  for ((j = 0; j < n; j++)); do sed 's/^/[claude-box] /' "$tmp/$j" >&2; done
+  rm -rf "$tmp"
 }
 
 cmd_init() {

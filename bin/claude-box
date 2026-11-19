@@ -5,7 +5,7 @@
 #
 #   Set up
 #   claude-box init [--own-profile] [workspace] <repo-url>...  create a workspace (several repos = one)
-#   claude-box set <workspace> <key> <value>    profile | connectors | docker | gcloud | color | env
+#   claude-box set <workspace> <key> <value>    profile | connectors | docker | gcloud | sync | color | env
 #                                               | git-name | git-email | signing
 #   claude-box secret <workspace> <VAR>         store the clipboard in the Keychain, check it, clear it
 #   claude-box trust <workspace>                trust the workspace and its repo folders in its profile
@@ -38,6 +38,7 @@
 #   .claude-box/connectors   "on" enables the Claude account's claude.ai connectors (default: off)
 #   .claude-box/docker       "on" gives the box its own private Docker daemon (default: off)
 #   .claude-box/gcloud       "on" adds the Google Cloud CLI, logged in per workspace (default: off)
+#   .claude-box/sync         "off" stops updating the repos on start (default: on, see --no-sync)
 #   .claude-box/git-name     git user.name in the box, e.g. Jane Doe
 #   .claude-box/git-email    git user.email; must be a verified email on your GitHub/GitLab account
 #   .claude-box/signing      "on" signs commits and tags with the workspace's SSH key (default: off)
@@ -53,6 +54,9 @@
 #   --exit '<script> [args]'
 #                           with --detached: what `claude-box stop` runs in the box first
 #   --profile <name>        Claude home to use; overrides .claude-box/profile
+#   --no-sync               don't fetch the repos this time. By default every start fetches origin and
+#                           fast-forwards a repo that is on its default branch with no local changes;
+#                           others are left alone and reported
 #   --pull                  pull the latest base image first
 #   --build-base            build the base image locally from this repo, then exit
 #   -h, --help              this help
@@ -65,7 +69,7 @@ BOX_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 BASE_IMAGE="ghcr.io/roytouw/claude-box:base"
 WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
 
-profile=""; shell=0; chat=0; pull=0; ws=""; gcloud_login=0; detached=""; exit_cmd=""
+profile=""; shell=0; chat=0; pull=0; sync=1; ws=""; gcloud_login=0; detached=""; exit_cmd=""
 claude_args=()
 
 usage() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }   # the header comment above
@@ -99,6 +103,7 @@ while [[ $# -gt 0 ]]; do
       if [[ "$1" == --detached ]]; then detached="$2"; else exit_cmd="$2"; fi
       shift ;;
     --pull) pull=1 ;;
+    --no-sync) sync=0 ;;
     --build-base) docker build --pull -t "$BASE_IMAGE" "$BOX_DIR/image"; exit 0 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; claude_args=("$@"); break ;;
@@ -173,6 +178,13 @@ profile="${profile:-private}"
   || { echo "profile must be a plain name, got: $profile" >&2; exit 2; }
 connectors="$(setting connectors)"; [[ "$connectors" == "on" ]] || connectors="off"
 echo "[claude-box] workspace $ws · profile $profile · connectors $connectors · gcloud $gcloud" >&2
+
+# --- repos: fetch origin, fast-forward where nothing can be lost (sync_repos in lib/commands.sh) ---
+if [[ $sync -eq 1 && $gcloud_login -eq 0 && "$(setting sync)" != off ]]; then
+  # shellcheck source=../lib/commands.sh
+  source "$BOX_DIR/lib/commands.sh"
+  sync_repos "$ws" || true
+fi
 
 # --- image -----------------------------------------------------------------------------------
 if [[ $pull -eq 1 ]] || ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
