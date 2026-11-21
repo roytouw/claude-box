@@ -89,6 +89,7 @@ again after Docker Desktop or the Mac restarts (turn on Docker Desktop's *Start 
 
 ```sh
 claude-box myproject --detached 'agent/agent.sh run' --exit 'agent/agent.sh stop'
+claude-box myproject --detached 'agent/agent.sh run' --logs   # start it and follow its output
 claude-box status myproject     # running?, restarts, last output
 claude-box logs myproject       # follow its output (Ctrl+C stops following, not the box)
 claude-box stop myproject       # runs the --exit script, then stops the box

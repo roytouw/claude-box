@@ -53,6 +53,8 @@
 #                           it. It keeps running after the terminal closes and comes back with Docker.
 #   --exit '<script> [args]'
 #                           with --detached: what `claude-box stop` runs in the box first
+#   --logs                  with --detached: follow its output once it started, like
+#                           `claude-box logs` (Ctrl+C stops following, not the box)
 #   --port <mac>[:<box>]    open localhost:<mac> on the Mac to port <box> (default: the same) on
 #                           localhost in the box, e.g. a dev server for your browser. Repeat it or
 #                           give a comma list (--port 3000,8080:80). Works with --detached too
@@ -65,14 +67,14 @@
 #   -h, --help              this help
 #
 # Example:
-#   claude-box hue --detached 'jira-agent/agent.sh run' --exit 'jira-agent/agent.sh stop'
+#   claude-box hue --detached 'jira-agent/agent.sh run' --exit 'jira-agent/agent.sh stop' --logs
 set -euo pipefail
 
 BOX_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 BASE_IMAGE="ghcr.io/roytouw/claude-box:base"
 WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
 
-profile=""; shell=0; chat=0; pull=0; sync=1; ws=""; gcloud_login=0; detached=""; exit_cmd=""
+profile=""; shell=0; chat=0; pull=0; sync=1; ws=""; gcloud_login=0; detached=""; exit_cmd=""; follow_logs=0
 claude_args=(); port_specs=()
 
 usage() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }   # the header comment above
@@ -109,6 +111,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 && -n "$2" ]] || { echo "$1 needs a script path" >&2; exit 2; }
       if [[ "$1" == --detached ]]; then detached="$2"; else exit_cmd="$2"; fi
       shift ;;
+    --logs) follow_logs=1 ;;
     --pull) pull=1 ;;
     --no-sync) sync=0 ;;
     --build-base) docker build --pull -t "$BASE_IMAGE" "$BOX_DIR/image"; exit 0 ;;
@@ -155,6 +158,9 @@ workspace_script() {   # "<path> [args]" -> script_cmd=(/workspace/<ws>/<path> a
 detached_container="claude-box-detached-${ws}"
 if [[ -n "$exit_cmd" && -z "$detached" ]]; then
   echo "--exit only works together with --detached" >&2; exit 2
+fi
+if [[ "$follow_logs" == 1 && -z "$detached" ]]; then
+  echo "--logs only works together with --detached (for a box that already runs: claude-box logs $ws)" >&2; exit 2
 fi
 if [[ -n "$detached" ]]; then
   [[ $shell -eq 0 && $chat -eq 0 && $gcloud_login -eq 0 ]] \
@@ -589,7 +595,7 @@ if [[ -n "$detached" ]]; then
   [[ ${#exit_label[@]} -gt 0 ]] && echo "[claude-box]   on stop: ${exit_label[1]#"claude-box.exit=/workspace/$ws/"}" >&2
   for p in ${port_label//,/ }; do echo "[claude-box]   http://localhost:${p%%:*} -> port ${p#*:} in the box" >&2; done
   echo "[claude-box]   logs: claude-box logs $ws · stop: claude-box stop $ws" >&2
-  exec >/dev/null   # docker run -d prints the container id; messages go to stderr
+  exec 3>&1 >/dev/null   # docker run -d prints the container id; messages go to stderr (3: for --logs)
 fi
 docker run "${run_mode[@]}" --init \
   "${net_args[@]}" "${port_args[@]+"${port_args[@]}"}" \
@@ -618,4 +624,8 @@ if [[ -n "$detached" ]]; then
     exit 1
   done
   echo "[claude-box] $ws is running detached; check it with: claude-box status $ws" >&2
+  if [[ "$follow_logs" == 1 ]]; then
+    echo "[claude-box] following its output (Ctrl+C stops following, not the box)" >&2
+    exec docker logs -f --tail 100 "$detached_container" >&3 3>&-
+  fi
 fi
