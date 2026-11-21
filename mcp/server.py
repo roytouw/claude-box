@@ -117,6 +117,10 @@ Detached boxes (an always-on agent or any long-running script, without a termina
   Docker Desktop's "Start when you sign in" on, also after a Mac restart). It has the workspace's
   secrets, settings and Docker daemon, but nothing that needs the Mac terminal (browser links,
   clipboard, `code`). Secrets are read at start: after changing one, stop and start it again.
+- Ports: a box opens none by default. To reach e.g. a dev server in the box from the Mac's
+  browser, the user adds `--port <mac>[:<box>]` (repeatable or a comma list) when starting it,
+  with or without --detached: `claude-box <ws> --port 3000` makes http://localhost:3000 on the
+  Mac reach localhost:3000 in the box (also when the server listens on localhost only).
 - detached_status shows whether it runs, its restarts and its last output; doctor on the
   workspace also flags one that keeps exiting. stop_detached stops it (only when the user asks).
   To follow the output live, the user runs `claude-box logs <workspace>`.

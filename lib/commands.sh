@@ -394,7 +394,7 @@ need_detached() {
 
 cmd_status() {
   local ws="${1:-}"; need_detached "$ws"
-  local name status restarts code started cmd exit_cmd
+  local name status restarts code started cmd exit_cmd ports p
   name="$(detached_name "$ws")"
   read -r status restarts code started <<< "$(detached_state "$ws")"
   cmd="$(docker inspect -f '{{join .Config.Cmd " "}}' "$name" 2>/dev/null)"
@@ -402,6 +402,8 @@ cmd_status() {
   echo "$ws: $status since ${started%.*}, restarted $restarts time(s)"
   echo "  runs:    ${cmd##*"/workspace/$ws/"}"
   [[ -n "$exit_cmd" ]] && echo "  on stop: ${exit_cmd#"/workspace/$ws/"}"
+  ports="$(docker inspect -f '{{index .Config.Labels "claude-box.ports"}}' "$name" 2>/dev/null || true)"
+  for p in ${ports//,/ }; do echo "  port:    http://localhost:${p%%:*} -> ${p#*:} in the box"; done
   if [[ "$status" != running || "$restarts" != 0 ]]; then
     echo "  ! the script exited (last status $code). A detached script must stay in the foreground;"
     echo "    when it returns, Docker starts it again. See its output below or with: claude-box logs $ws"
