@@ -60,6 +60,7 @@ claude-box myproject           # agent view in ~/claude-box/workspaces/myproject
 claude-box myproject --chat    # a plain new chat instead
 claude-box myproject --shell   # bash instead
 claude-box myproject --detached 'agent/run.sh'   # a script in the background, see Detached below
+claude-box myproject --port 3000   # http://localhost:3000 on the Mac reaches port 3000 in the box, see Ports
 claude-box -h                  # all commands; claude-box <command> -h for one
 ```
 
@@ -267,7 +268,30 @@ Mac's `127.0.0.1` (never other interfaces) and relays each connection into the b
 `docker exec`; nothing is published, so boxes don't fight over ports. The Mac port closes when the
 forward stops. A port already in use on the Mac is skipped and picked up once it's free;
 `/tmp/claude-box-ports` in the box lists what is forwarded, so Claude can tell you the URL. Boxes
-started with `--detached` don't get this.
+started with `--detached` don't get this; use `--port` for those (below).
+
+## Ports (`--port`)
+
+A box opens no ports by default. To reach something in the box from your Mac's browser, e.g. a
+dev server on port 3000, start the box with `--port`:
+
+```sh
+claude-box myproject --port 3000                 # http://localhost:3000 on the Mac -> 3000 in the box
+claude-box myproject --port 8080:3000            # <mac>:<box>: Mac port 8080 -> 3000 in the box
+claude-box myproject --port 3000,5173 --port 8080:80   # several: repeat it or give a comma list
+claude-box myproject --detached 'web/serve.sh' --port 3000   # also for detached boxes
+```
+
+The port opens on the Mac's `127.0.0.1` only (not your network). In the box, connections go to
+`localhost:<box>`, so a dev server that only listens on localhost (the default of e.g. Vite or
+`next dev`) works without `--host 0.0.0.0`. Docker publishes the port as part of the container, so
+a detached box keeps it after Docker Desktop or the Mac restarts; `claude-box status` lists it.
+
+A Mac port that is already in use stops the start with a message: pick another Mac port with
+`<mac>:<box>`. Each forward uses a relay port in the box, from 29000 up; don't run anything else
+there. With `docker on`, the ports are opened on the workspace's Docker daemon, whose network the
+box shares (so ports published by `docker run -p`/compose in the box can be forwarded too). They
+are fixed while it runs: a second box of the same workspace must use the same `--port`, or none.
 
 ## Troubleshooting
 
