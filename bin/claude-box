@@ -6,7 +6,7 @@
 #   Set up
 #   claude-box init [--own-profile] [workspace] <repo-url>...  create a workspace (several repos = one)
 #   claude-box set <workspace> <key> <value>    profile | connectors | docker | gcloud | sync | color | env
-#                                               | git-name | git-email | signing
+#                                               | git-name | git-email | signing | skills
 #   claude-box secret <workspace> <VAR>         store the clipboard in the Keychain, check it, clear it
 #   claude-box trust <workspace>                trust the workspace and its repo folders in its profile
 #   claude-box gcloud-login <workspace>         log gcloud in for this workspace only (needs gcloud on)
@@ -42,6 +42,8 @@
 #   .claude-box/git-name     git user.name in the box, e.g. Jane Doe
 #   .claude-box/git-email    git user.email; must be a verified email on your GitHub/GitLab account
 #   .claude-box/signing      "on" signs commits and tags with the workspace's SSH key (default: off)
+#   .claude-box/skills       "off" stops mounting your skills from the Mac's ~/.claude/skills
+#                            (default: on, read-only)
 #
 # Options:
 #   --chat                  a plain new `claude` chat instead of agent view
@@ -225,6 +227,22 @@ profile="${profile:-private}"
   || { echo "profile must be a plain name, got: $profile" >&2; exit 2; }
 connectors="$(setting connectors)"; [[ "$connectors" == "on" ]] || connectors="off"
 echo "[claude-box] workspace $ws · profile $profile · connectors $connectors · gcloud $gcloud" >&2
+
+# --- skills: your skills from the Mac's ~/.claude/skills, mounted read-only (on by default) -------
+# Each skill folder goes in on its own at the same place in the profile's home, so edits on the Mac
+# show up in the box right away, the box can't change them, and it can still add skills of its own
+# next to them. Nothing else from ~/.claude goes in. A skill added on the Mac needs a new start.
+HOST_SKILLS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills"
+skill_args=(); skill_names=()
+if [[ "$(setting skills)" != off && -d "$HOST_SKILLS" ]]; then
+  for dir in "$HOST_SKILLS"/*/; do
+    name="$(basename "$dir")"
+    [[ -f "$dir/SKILL.md" && "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
+    skill_args+=(-v "$(cd -P "$dir" && pwd):/home/agent/.claude/skills/$name:ro")
+    skill_names+=("$name")
+  done
+  [[ ${#skill_names[@]} -gt 0 ]] && echo "[claude-box] your skills, read-only: ${skill_names[*]} (opt out: claude-box set $ws skills off)" >&2
+fi
 
 # --- repos: fetch origin, fast-forward where nothing can be lost (sync_repos in lib/commands.sh) ---
 if [[ $sync -eq 1 && $gcloud_login -eq 0 && "$(setting sync)" != off ]]; then
@@ -581,7 +599,8 @@ cleanup() {
 trap cleanup EXIT
 
 # Only the workspace and the profile's home volume are mounted. Nothing from the host home
-# (~/.claude, ~/.ssh, ~/.gitconfig, gh/glab/gcloud config) and no env passthrough beyond the above.
+# (~/.claude, ~/.ssh, ~/.gitconfig, gh/glab/gcloud config) and no env passthrough beyond the above,
+# except your skills from ~/.claude/skills (read-only, unless .claude-box/skills is off).
 # Each project gets its own path (/workspace/<name>), so Claude keeps separate history per project.
 run_mode=(--rm -it --name "$container")
 [[ ${#dind_args[@]} -eq 0 ]] && check_mac_ports
@@ -597,6 +616,12 @@ if [[ -n "$detached" ]]; then
   echo "[claude-box]   logs: claude-box logs $ws · stop: claude-box stop $ws" >&2
   exec 3>&1 >/dev/null   # docker run -d prints the container id; messages go to stderr (3: for --logs)
 fi
+# Docker would create the skills' parent folder in the home volume as root, and the box couldn't
+# add skills of its own there; make it as the box's user first.
+if [[ ${#skill_args[@]} -gt 0 ]]; then
+  docker run --rm --entrypoint mkdir -v "claude-box-home-${profile}:/home/agent" "$image" -p /home/agent/.claude/skills \
+    || echo "[claude-box] couldn't create ~/.claude/skills in profile $profile" >&2
+fi
 docker run "${run_mode[@]}" --init \
   "${net_args[@]}" "${port_args[@]+"${port_args[@]}"}" \
   -e CLAUDE_BOX_OPEN_PORT="$open_port" -e CLAUDE_BOX_OPEN_TOKEN="$open_token" \
@@ -604,7 +629,7 @@ docker run "${run_mode[@]}" --init \
   "${env_args[@]+"${env_args[@]}"}" \
   "${dind_args[@]+"${dind_args[@]}"}" \
   "${gcloud_args[@]+"${gcloud_args[@]}"}" \
-  -v "claude-box-home-${profile}:/home/agent" \
+  -v "claude-box-home-${profile}:/home/agent" "${skill_args[@]+"${skill_args[@]}"}" \
   -v "$ws_path:/workspace/$ws" "${cfg_ro[@]+"${cfg_ro[@]}"}" -w "/workspace/$ws" \
   "$image" "${cmd[@]}"
 

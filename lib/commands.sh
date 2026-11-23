@@ -160,8 +160,8 @@ doctor_workspace() {
   [[ -d "$d" ]] || { bad "$d doesn't exist"; hint "create it: claude-box init $ws <repo-url>"; return; }
   [[ -d "$cfg" ]] && ok ".claude-box/ present" || warn "no .claude-box/: runs on the plain base image without secrets"
   local p c k g y; p="$(cfg_value "$ws" profile)"; c="$(cfg_value "$ws" connectors)"; k="$(cfg_value "$ws" docker)"; g="$(cfg_value "$ws" gcloud)"
-  y="$(cfg_value "$ws" sync)"
-  ok "profile ${p:-private} · connectors ${c:-off} · docker ${k:-off} · gcloud ${g:-off} · sync ${y:-on}"
+  y="$(cfg_value "$ws" sync)"; local s; s="$(cfg_value "$ws" skills)"
+  ok "profile ${p:-private} · connectors ${c:-off} · docker ${k:-off} · gcloud ${g:-off} · sync ${y:-on} · skills ${s:-on}"
   if [[ "$g" == on ]]; then
     # The login lives in the workspace's gcloud volume; read the account without starting gcloud.
     local acct=""
@@ -338,8 +338,6 @@ cmd_set() {
              if [[ "$val" == private ]]; then rm -f "$cfg/profile"; else echo "$val" > "$cfg/profile"; fi ;;
     connectors|docker|gcloud)
              case "$val" in on) echo on > "$cfg/$key" ;; off) rm -f "$cfg/$key" ;; *) echo "$key must be on or off" >&2; exit 2 ;; esac ;;
-    sync)    # on by default, so only "off" is written
-             case "$val" in on) rm -f "$cfg/sync" ;; off) echo off > "$cfg/sync" ;; *) echo "sync must be on or off" >&2; exit 2 ;; esac ;;
     git-name) val="${*:3}"   # unquoted "Jane Doe" arrives as two arguments
              [[ -n "$val" ]] || { echo "usage: claude-box set <workspace> git-name \"Jane Doe\"" >&2; exit 2; }
              echo "$val" > "$cfg/git-name" ;;
@@ -353,14 +351,17 @@ cmd_set() {
                off) rm -f "$cfg/signing" ;;
                *)   echo "signing must be on or off" >&2; exit 2 ;;
              esac ;;
+    sync|skills)   # on by default, so only "off" is written
+             case "$val" in on) rm -f "$cfg/$key" ;; off) echo off > "$cfg/$key" ;; *) echo "$key must be on or off" >&2; exit 2 ;; esac ;;
     color)   [[ "$val" =~ ^#[0-9A-Fa-f]{6}$ ]] || { echo "color must be #RRGGBB" >&2; exit 2; }
              echo "$val" > "$cfg/color" ;;
     env)     [[ "$val" =~ ^[A-Z_][A-Z0-9_]*=.*$ ]] || { echo "env must be KEY=value" >&2; exit 2; }
              local k="${val%%=*}"; touch "$cfg/env"
              grep -v "^$k=" "$cfg/env" > "$cfg/env.tmp" || true; echo "$val" >> "$cfg/env.tmp"; mv "$cfg/env.tmp" "$cfg/env" ;;
-    *) echo "usage: claude-box set <workspace> profile|connectors|docker|gcloud|sync|git-name|git-email|signing|color|env <value>" >&2; exit 2 ;;
+    *) echo "usage: claude-box set <workspace> profile|connectors|docker|gcloud|sync|git-name|git-email|signing|skills|color|env <value>" >&2; exit 2 ;;
   esac
   echo "$ws: $key = $val"
+  [[ "$key" == skills ]] && echo "Takes effect on the next start of the box."
   [[ "$key" == signing && "$val" == on ]] && signing_key_instructions "$ws"
   [[ "$key" == gcloud && "$val" == on ]] && echo "Log gcloud in for this workspace with: claude-box gcloud-login $ws"
   return 0

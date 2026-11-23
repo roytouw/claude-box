@@ -63,6 +63,9 @@ Typical setup flow:
    - Whether claude.ai connectors (Slack, Jira, ...) of that profile's account should be
      available, whether the project needs Docker (create_workspace reports compose files), and a
      terminal color (dark enough for white text).
+   - Skills: the user's own skills from ~/.claude/skills on the Mac are in the box by default,
+     read-only (list the folder's skill names when there are any). Ask whether that's fine for
+     this workspace; only if they don't want them, skills=False.
    - Whether the project uses Google Cloud (GCP, GKE, Cloud Run, gcloud in scripts or CI; look
      for hints such as cloudbuild.yaml or gcloud in the repos). If yes: gcloud=True, and ask for
      the default GCP project to set as env CLOUDSDK_CORE_PROJECT. kubectl, k9s and grpcurl are always
@@ -215,6 +218,7 @@ def configure_workspace(
     signing: bool | None = None,
     color: str | None = None,
     env: dict[str, str] | None = None,
+    skills: bool | None = None,
 ) -> str:
     """Change workspace settings. Only the given settings change.
 
@@ -235,6 +239,8 @@ def configure_workspace(
     color: terminal background as #RRGGBB while the box runs; pick a dark color so white text
       stays readable (contrast 7:1 or more).
     env: non-secret environment variables, e.g. {"GITLAB_HOST": "gitlab.example.com"}.
+    skills: mount the user's own Claude skills (~/.claude/skills on the Mac) read-only in the box
+      (on by default). False only when the user doesn't want them in this workspace.
     """
     results = []
     if profile is not None:
@@ -255,6 +261,8 @@ def configure_workspace(
         results.append(run("set", workspace, "signing", "on" if signing else "off"))
     if color is not None:
         results.append(run("set", workspace, "color", color))
+    if skills is not None:
+        results.append(run("set", workspace, "skills", "on" if skills else "off"))
     for key, value in (env or {}).items():
         results.append(run("set", workspace, "env", f"{key}={value}"))
     return "\n".join(results) or "Nothing to change."
