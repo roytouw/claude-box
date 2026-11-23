@@ -2,7 +2,7 @@
 
 Run Claude Code in a Docker container per project, separated from your host setup.
 The container only sees the project folder and its own home volume: no host `~/.claude`
-(plugins, skills, memory), no SSH keys, no git, gh or glab config. Secrets come from your macOS
+(plugins, skills, memory; only skills you name, read-only), no SSH keys, no git, gh or glab config. Secrets come from your macOS
 Keychain at start-up and are never baked into an image.
 
 The base image has Claude Code, git, gh, glab, uv, the Docker CLI, kubectl, k9s and grpcurl. The
@@ -46,7 +46,7 @@ claude-box init <name> <url>           # add a repo to that workspace (also list
 claude-box secret <name> GITLAB_TOKEN  # copy the token first: stores the clipboard, checks it, clears it
 claude-box set <name> git-email jane@acme.com   # git identity (also: git-name "Jane Doe")
 claude-box set <name> signing on       # signed commits: makes an SSH signing key, shows where to add it
-claude-box set <name> docker on        # profile | connectors | docker | gcloud | sync | color | env
+claude-box set <name> docker on        # profile | connectors | docker | gcloud | sync | skills | color | env
 claude-box gcloud-login <name>         # with gcloud on: log gcloud in for this workspace only
 claude-box doctor <name>               # checks remotes, secrets (against GitHub/GitLab/Jira), image
 claude-box list                        # all workspaces
@@ -151,6 +151,7 @@ can't change the repos (see [multi-repo example](examples/multi-repo-github-gitl
   git-name     git user.name in the box, e.g. Jane Doe
   git-email    git user.email in the box (verified on your GitHub/GitLab account)
   signing      "on" to sign commits and tags (see below); signing-key.pub is its public key
+  skills       your own skills from ~/.claude/skills on the Mac to use in the box (see below)
 ```
 
 Inside the box `.claude-box/` is read-only, so an agent can't change its own settings, secrets or
@@ -225,6 +226,26 @@ is registered and the email verified, if the token may read them (GitLab: `read_
 GitHub fine-grained: account permissions **SSH signing keys** and **Email addresses**, read-only).
 To make a new key: delete the Keychain item and `.claude-box/signing-key.pub`, then turn signing
 on again.
+
+## Your own skills (opt-in)
+
+The box doesn't see your Mac's `~/.claude`. To use some of your own skills in a workspace anyway,
+name them:
+
+```sh
+claude-box set <workspace> skills qareer-evidence,other-skill   # folders in ~/.claude/skills
+claude-box set <workspace> skills off                           # none again
+```
+
+On the next start each named skill folder is mounted **read-only** at the same place in the box
+(`~/.claude/skills/<name>`), so edits on the Mac show up in the box right away and the box can't
+change them. Only the folders you name go in, never the rest of `~/.claude`. A skill that writes
+files outside the workspace can't reach your Mac from the box: let it write in the workspace
+instead. Docker Desktop must share the folder (it shares `/Users` by default); `claude-box doctor
+<workspace>` flags a named skill that is missing.
+
+Plugins and skills installed inside the box stay in the profile's home volume, shared by the
+workspaces on that profile.
 
 ## Docker inside the box (opt-in)
 

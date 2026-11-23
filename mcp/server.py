@@ -215,6 +215,7 @@ def configure_workspace(
     signing: bool | None = None,
     color: str | None = None,
     env: dict[str, str] | None = None,
+    skills: list[str] | None = None,
 ) -> str:
     """Change workspace settings. Only the given settings change.
 
@@ -235,6 +236,8 @@ def configure_workspace(
     color: terminal background as #RRGGBB while the box runs; pick a dark color so white text
       stays readable (contrast 7:1 or more).
     env: non-secret environment variables, e.g. {"GITLAB_HOST": "gitlab.example.com"}.
+    skills: names of the user's own Claude skills (folders in ~/.claude/skills on the Mac) to use
+      in the box, mounted read-only. Replaces the list; [] for none. Only skills the user names.
     """
     results = []
     if profile is not None:
@@ -255,6 +258,8 @@ def configure_workspace(
         results.append(run("set", workspace, "signing", "on" if signing else "off"))
     if color is not None:
         results.append(run("set", workspace, "color", color))
+    if skills is not None:
+        results.append(run("set", workspace, "skills", ",".join(skills) if skills else "off"))
     for key, value in (env or {}).items():
         results.append(run("set", workspace, "env", f"{key}={value}"))
     return "\n".join(results) or "Nothing to change."
