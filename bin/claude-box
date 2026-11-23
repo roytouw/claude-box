@@ -42,8 +42,8 @@
 #   .claude-box/git-name     git user.name in the box, e.g. Jane Doe
 #   .claude-box/git-email    git user.email; must be a verified email on your GitHub/GitLab account
 #   .claude-box/signing      "on" signs commits and tags with the workspace's SSH key (default: off)
-#   .claude-box/skills       skills from the Mac's ~/.claude/skills to use in the box, read-only;
-#                            one name per line (default: none)
+#   .claude-box/skills       "off" stops mounting your skills from the Mac's ~/.claude/skills
+#                            (default: on, read-only)
 #
 # Options:
 #   --chat                  a plain new `claude` chat instead of agent view
@@ -228,25 +228,20 @@ profile="${profile:-private}"
 connectors="$(setting connectors)"; [[ "$connectors" == "on" ]] || connectors="off"
 echo "[claude-box] workspace $ws · profile $profile · connectors $connectors · gcloud $gcloud" >&2
 
-# --- skills: named skills from the Mac's ~/.claude/skills, mounted read-only ----------------------
-# Only the skills listed in .claude-box/skills go in, each at the same place in the profile's home,
-# so edits on the Mac show up in the box right away and the box can't change them.
+# --- skills: your skills from the Mac's ~/.claude/skills, mounted read-only (on by default) -------
+# Each skill folder goes in on its own at the same place in the profile's home, so edits on the Mac
+# show up in the box right away, the box can't change them, and it can still add skills of its own
+# next to them. Nothing else from ~/.claude goes in. A skill added on the Mac needs a new start.
 HOST_SKILLS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills"
 skill_args=(); skill_names=()
-if [[ -f "$cfg/skills" ]]; then
-  while read -r name || [[ -n "$name" ]]; do
-    name="${name%%#*}"; name="$(echo "$name" | xargs)"
-    [[ -z "$name" ]] && continue
-    if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-      echo "[claude-box] skipping invalid skill name: $name" >&2; continue
-    fi
-    if [[ ! -f "$HOST_SKILLS/$name/SKILL.md" ]]; then
-      echo "[claude-box] skill $name not found on this Mac ($HOST_SKILLS/$name/SKILL.md); skipping it" >&2; continue
-    fi
-    skill_args+=(-v "$(cd -P "$HOST_SKILLS/$name" && pwd):/home/agent/.claude/skills/$name:ro")
+if [[ "$(setting skills)" != off && -d "$HOST_SKILLS" ]]; then
+  for dir in "$HOST_SKILLS"/*/; do
+    name="$(basename "$dir")"
+    [[ -f "$dir/SKILL.md" && "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
+    skill_args+=(-v "$(cd -P "$dir" && pwd):/home/agent/.claude/skills/$name:ro")
     skill_names+=("$name")
-  done < "$cfg/skills"
-  [[ ${#skill_names[@]} -gt 0 ]] && echo "[claude-box] skills from the Mac (read-only): ${skill_names[*]}" >&2
+  done
+  [[ ${#skill_names[@]} -gt 0 ]] && echo "[claude-box] your skills, read-only: ${skill_names[*]} (opt out: claude-box set $ws skills off)" >&2
 fi
 
 # --- repos: fetch origin, fast-forward where nothing can be lost (sync_repos in lib/commands.sh) ---
@@ -605,7 +600,7 @@ trap cleanup EXIT
 
 # Only the workspace and the profile's home volume are mounted. Nothing from the host home
 # (~/.claude, ~/.ssh, ~/.gitconfig, gh/glab/gcloud config) and no env passthrough beyond the above,
-# except the skills the workspace names in .claude-box/skills (read-only).
+# except your skills from ~/.claude/skills (read-only, unless .claude-box/skills is off).
 # Each project gets its own path (/workspace/<name>), so Claude keeps separate history per project.
 run_mode=(--rm -it --name "$container")
 [[ ${#dind_args[@]} -eq 0 ]] && check_mac_ports
