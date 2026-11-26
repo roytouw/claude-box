@@ -117,6 +117,11 @@ Mac bridge: no links opened in your browser, no clipboard, no `code`. Secrets ar
 Keychain when it starts and kept in the container's config across restarts; after changing one,
 `claude-box stop` it and start it again.
 
+Claude in a detached box runs without agent view, `--bg` and `/background`
+(`CLAUDE_CODE_DISABLE_AGENT_VIEW=1`): their daemon keeps its lock in the profile's home, which
+all boxes share, and one running in a detached box would make `claude agents` in every other box
+of the profile hang. `claude -p` and plain `claude` work as usual.
+
 **Profiles** keep accounts apart. A profile is a named Docker volume with its own Claude login,
 plugins and memory (`private` by default). The name is only a label: the account is whatever you
 log in with on its first start. Run two side by side with different accounts:
