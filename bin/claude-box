@@ -15,6 +15,8 @@
 #   claude-box doctor [workspace]               check your setup and fix hints (changes nothing)
 #   claude-box list                             your workspaces, their settings and detached boxes
 #   claude-box profiles                         profiles (Claude homes) and which account is logged in
+#   claude-box clean [workspace] [--go]         free disk space: workspace Docker daemons, old images,
+#                                               | build cache; --go also Go's caches in profile homes
 #
 #   Detached boxes (started with --detached)
 #   claude-box status <workspace>               running or not, restarts, last log lines
@@ -74,6 +76,7 @@ set -euo pipefail
 
 BOX_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 BASE_IMAGE="ghcr.io/roytouw/claude-box:base"
+DIND_IMAGE="docker:29.9.2-dind"   # a workspace's private Docker daemon (docker on)
 WS_ROOT="${CLAUDE_BOX_WORKSPACES:-$HOME/claude-box/workspaces}"
 
 profile=""; shell=0; chat=0; pull=0; sync=1; ws=""; gcloud_login=0; detached=""; exit_cmd=""; follow_logs=0
@@ -87,10 +90,10 @@ cmd_usage() {   # its line plus continuation lines (indented further, starting w
     on && /^ +\| / { print "       " substr($0, 3); next }
     { on = 0 }'
 }
-COMMANDS="init set secret trust gcloud-login doctor list profiles status logs stop update"
+COMMANDS="init set secret trust gcloud-login doctor list profiles clean status logs stop update"
 
 case "${1:-}" in
-  doctor|init|set|secret|list|profiles|trust|update|status|logs|stop)
+  doctor|init|set|secret|list|profiles|clean|trust|update|status|logs|stop)
     sub="$1"; shift
     for a in "$@"; do [[ "$a" == -h || "$a" == --help ]] && { cmd_usage "$sub"; exit 0; }; done
     # shellcheck source=../lib/commands.sh
@@ -245,21 +248,28 @@ if [[ "$(setting skills)" != off && -d "$HOST_SKILLS" ]]; then
 fi
 
 # --- repos: fetch origin, fast-forward where nothing can be lost (sync_repos in lib/commands.sh) ---
+# shellcheck source=../lib/commands.sh
+source "$BOX_DIR/lib/commands.sh"
 if [[ $sync -eq 1 && $gcloud_login -eq 0 && "$(setting sync)" != off ]]; then
-  # shellcheck source=../lib/commands.sh
-  source "$BOX_DIR/lib/commands.sh"
   sync_repos "$ws" || true
 fi
 
 # --- image -----------------------------------------------------------------------------------
+# A pull or rebuild that moves a tag leaves the old image behind untagged (GBs each). Remember
+# "<tag> <old id>" pairs, newest first, and remove the old ones once everything is built.
+replaced=()
 if [[ $pull -eq 1 ]] || ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
+  old="$(image_id "$BASE_IMAGE")"
   docker pull "$BASE_IMAGE"
+  replaced=("$BASE_IMAGE" "$old")
 fi
 image="$BASE_IMAGE"
 if [[ -f "$cfg/Dockerfile" ]]; then
   image="claude-box-project-$(echo "$ws" | tr '[:upper:]' '[:lower:]')"
   echo "[claude-box] building project image $image" >&2
+  old="$(image_id "$image")"
   docker build -q -t "$image" "$cfg" >/dev/null
+  replaced=("$image" "$old" "${replaced[@]+"${replaced[@]}"}")
 fi
 # Google Cloud CLI: a layer on top of the workspace's image (cached after the first build).
 gcloud_args=()
@@ -267,11 +277,15 @@ if [[ "$gcloud" == "on" ]]; then
   gcloud_image="claude-box-gcloud-$(echo "$ws" | tr '[:upper:]' '[:lower:]')"
   docker image inspect "$gcloud_image" >/dev/null 2>&1 \
     || echo "[claude-box] adding the Google Cloud CLI to the image (a few minutes, once)" >&2
+  old="$(image_id "$gcloud_image")"
   docker build -q --build-arg "BASE=$image" -t "$gcloud_image" "$BOX_DIR/image/gcloud" >/dev/null
+  replaced=("$gcloud_image" "$old" "${replaced[@]+"${replaced[@]}"}")
   image="$gcloud_image"
   # Its login, ADC and kubeconfig live in a volume of this workspace, not in the profile's home.
   gcloud_args=(-v "claude-box-gcloud-${ws}:/gcloud")
 fi
+# Newest first: an old gcloud image builds on the old project image, which builds on the old base.
+for ((i = 0; i < ${#replaced[@]}; i += 2)); do drop_replaced "${replaced[i]}" "${replaced[i + 1]}"; done
 
 # --- secrets: Keychain item "claude-box/<workspace>/<VAR>" -> env VAR -------------------------
 # Scoped to this workspace's namespace, so a project can never ask for other Keychain items.
@@ -519,7 +533,6 @@ cfg_ro=()
 # The daemon runs privileged in its own container, sees only the workspace (at the same path, so
 # bind mounts and compose files work), and the box shares its network so published ports are on
 # localhost. Images are cached per workspace. It stops when the last box using it exits.
-DIND_IMAGE="docker:29.9.2-dind"
 dind_name="claude-box-dind-${ws}"
 net_args=(--hostname "claude-box-${ws}")
 dind_args=()

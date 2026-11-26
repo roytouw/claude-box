@@ -99,10 +99,12 @@ Typical setup flow:
    asks for a Claude login in the box).
 
 When the user says a box doesn't work, run doctor on that workspace (list_workspaces if unsure
-which) and explain the problems and fixes in plain words.
+which) and explain the problems and fixes in plain words. Disk space (doctor warns about a
+workspace's Docker daemon or profile home over 10 GB): tell the user to run `claude-box clean
+[workspace]` themselves (`--go` also clears Go's caches); it prunes images and containers.
 
 CLI shape, when you tell the user a command: `claude-box <command> <workspace> [args]` for the
-commands (init, set, secret, trust, gcloud-login, doctor, status, logs, stop), and
+commands (init, set, secret, trust, gcloud-login, doctor, clean, status, logs, stop), and
 `claude-box <workspace> [options]` to start a box. `claude-box <command> -h` shows one command's
 usage. A workspace must exist before it can start (create_workspace), except "scratch".
 
