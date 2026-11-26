@@ -615,6 +615,12 @@ if [[ -n "$detached" ]]; then
   for p in ${port_label//,/ }; do echo "[claude-box]   http://localhost:${p%%:*} -> port ${p#*:} in the box" >&2; done
   echo "[claude-box]   logs: claude-box logs $ws · stop: claude-box stop $ws" >&2
   exec 3>&1 >/dev/null   # docker run -d prints the container id; messages go to stderr (3: for --logs)
+  # Claude Code keeps its background-session daemon's lock in ~/.claude, which every box of the
+  # profile shares, but the daemon's pid and control socket only exist inside one container. A
+  # daemon started here would hold that lock where no other box can reach it, and their
+  # `claude agents` would hang. Nobody looks at agent view in a detached box: turn it off (it also
+  # turns off --bg and the on-demand daemon). Last, so a workspace env setting can't undo it.
+  env_args+=(-e CLAUDE_CODE_DISABLE_AGENT_VIEW=1)
 fi
 # Docker would create the skills' parent folder in the home volume as root, and the box couldn't
 # add skills of its own there; make it as the box's user first.
