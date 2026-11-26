@@ -1,7 +1,8 @@
-# claude-box subcommands: init, set, secret, trust, doctor, list, profiles, status, logs, stop, update.
-# Their usage lines live in the header of bin/claude-box (shown by `claude-box <command> -h`).
+# claude-box subcommands: init, set, secret, trust, doctor, list, profiles, clean, status, logs, stop,
+# update. Their usage lines live in the header of bin/claude-box (shown by `claude-box <command> -h`).
 # Sourced by bin/claude-box (bash 3.2 compatible: macOS /bin/bash). Secret values are never printed.
-# Also sourced when a box starts, for sync_repos (bringing the workspace's repos up to date).
+# Also sourced when a box starts, for sync_repos (bringing the workspace's repos up to date) and
+# drop_replaced (removing the images a rebuild replaced).
 
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; DOCTOR_PROBLEMS=$((DOCTOR_PROBLEMS + 1)); }
@@ -20,6 +21,25 @@ keychain()  { security find-generic-password -s "claude-box/$1/$2" -w 2>/dev/nul
 secret_names() {
   local f; f="$(ws_cfg "$1")/secrets.txt"; [[ -f "$f" ]] || return 0
   sed -e 's/#.*//' -e 's/[[:space:]]//g' "$f" | grep -E '^[A-Z_][A-Z0-9_]*$' || true
+}
+
+# --- images and volumes: disk space ---------------------------------------------------------------
+# Every claude-box image carries the base image's source label (project and gcloud images inherit
+# it), so old ones can be pruned without touching other Docker images on the Mac.
+IMAGE_LABEL="org.opencontainers.image.source=https://github.com/roytouw/claude-box"
+image_id() { docker image inspect -f '{{.Id}}' "$1" 2>/dev/null || true; }
+# After a pull or build of tag $1, remove the image it pointed to before ($2) if the tag moved.
+# Fails quietly while a container still runs that image or another image builds on it; claude-box
+# clean removes it later.
+drop_replaced() {
+  [[ -n "$2" && "$2" != "$(image_id "$1")" ]] && docker image rm "$2" >/dev/null 2>&1
+  return 0
+}
+# "<volume> <size>" per claude-box volume. Docker measures every volume for this: a few seconds.
+volume_sizes() { docker system df -v 2>/dev/null | awk '$1 ~ /^claude-box-/ && NF == 3 { print $1, $3 }'; }
+size_gb() {   # Docker's "13.76GB" / "331.3MB" / "0B" -> whole GB
+  awk -v s="$1" 'BEGIN { n = s + 0; u = s; sub(/^[0-9.]+/, "", u)
+    f = (u == "TB") ? 1000 : (u == "GB") ? 1 : 0; printf "%d", n * f }'
 }
 
 # git@host:path, ssh://git@host/path or https://host/path  ->  https://host/path(.git)
@@ -206,14 +226,33 @@ doctor_workspace() {
   done
   if [[ -f "$cfg/mcp.json" ]]; then jq -e . "$cfg/mcp.json" >/dev/null 2>&1 && ok "mcp.json valid" || bad "mcp.json isn't valid JSON"; fi
   if [[ -f "$cfg/Dockerfile" ]]; then
-    if docker build -q -t "claude-box-project-$(echo "$ws" | tr '[:upper:]' '[:lower:]')" "$cfg" >/dev/null 2>&1; then ok "project image builds"
+    local img old; img="claude-box-project-$(echo "$ws" | tr '[:upper:]' '[:lower:]')"; old="$(image_id "$img")"
+    if docker build -q -t "$img" "$cfg" >/dev/null 2>&1; then ok "project image builds"; drop_replaced "$img" "$old"
     else bad "project image doesn't build"; hint "docker build $cfg"; fi
   fi
 }
 
+# Disk use of the workspace's Docker daemon and of its profile's home: both only ever grow.
+DISK_WARN_GB=10
+doctor_disk() {
+  local ws="$1" p sizes v size
+  p="$(cfg_value "$ws" profile)"; p="${p:-private}"
+  sizes="$(volume_sizes)"
+  for v in "claude-box-dind-$ws" "claude-box-home-$p"; do
+    size="$(echo "$sizes" | awk -v v="$v" '$1 == v { print $2 }')"
+    [[ -n "$size" ]] || continue
+    if [[ "$(size_gb "$size")" -lt $DISK_WARN_GB ]]; then ok "$v uses $size"; continue; fi
+    warn "$v uses $size"
+    case "$v" in
+      claude-box-dind-*) hint "images and containers in its Docker daemon; free them with: claude-box clean $ws" ;;
+      *) hint "mostly tool caches (Go's in ~/.cache and ~/go are often GBs); free Go's with: claude-box clean $ws --go" ;;
+    esac
+  done
+}
+
 cmd_doctor() {
   doctor_system
-  if [[ -n "${1:-}" ]]; then need_ws "$1"; doctor_workspace "$1"; doctor_detached "$1"; fi
+  if [[ -n "${1:-}" ]]; then need_ws "$1"; doctor_workspace "$1"; doctor_detached "$1"; doctor_disk "$1"; fi
   echo
   if [[ $DOCTOR_PROBLEMS -eq 0 ]]; then echo "No problems found."; else echo "$DOCTOR_PROBLEMS problem(s) found; see the hints above."; fi
   [[ $DOCTOR_PROBLEMS -eq 0 ]]
@@ -365,6 +404,88 @@ cmd_set() {
   [[ "$key" == signing && "$val" == on ]] && signing_key_instructions "$ws"
   [[ "$key" == gcloud && "$val" == on ]] && echo "Log gcloud in for this workspace with: claude-box gcloud-login $ws"
   return 0
+}
+
+# --- clean: give disk space back ------------------------------------------------------------------
+# Only what is built or pulled again when needed; nothing a workspace keeps is removed:
+# - each workspace's private Docker daemon (docker on): `docker system prune -af` in that daemon,
+#   so its stopped containers, the images no running container uses and its build cache. Its
+#   volumes (database data and the like) stay. A daemon that isn't running is started for this
+#   with the mounts a box gives it, and removed again unless a box started using it meanwhile.
+# - claude-box images a newer build or pull replaced (untagged, with claude-box's label)
+# - Docker's build cache (all of it: Docker keeps no owner per cache entry)
+# - with --go: Go's build and module cache in the profile homes (~/.cache/go-build, ~/go/pkg/mod),
+#   skipped for a profile while one of its boxes runs (a build there would break).
+reclaimed() {   # the total from a prune's output ("Total reclaimed space: 1.2GB", builder: "Total: 1.2GB")
+  local r; r="$(sed -n 's/^Total\( reclaimed space\)\{0,1\}:[[:space:]]*//p' | tail -1)"; echo "${r:-0B}"
+}
+clean_dind() {
+  local ws="$1" d="claude-box-dind-$1" started=0 out
+  if [[ "$(docker inspect -f '{{.State.Running}}' "$d" 2>/dev/null)" != "true" ]]; then
+    if [[ ! -d "$WS_ROOT/$ws" ]]; then
+      echo "  $ws's Docker daemon: the workspace is gone; remove its data with: docker volume rm $d claude-box-dind-run-$ws"
+      return 0
+    fi
+    local cfg_ro=(); [[ -d "$(ws_cfg "$ws")" ]] && cfg_ro=(-v "$(ws_cfg "$ws"):/workspace/$ws/.claude-box:ro")
+    docker rm -f "$d" >/dev/null 2>&1 || true
+    docker image inspect "$DIND_IMAGE" >/dev/null 2>&1 || docker pull -q "$DIND_IMAGE" >/dev/null
+    docker run -d --privileged --name "$d" -v "$d:/var/lib/docker" -v "claude-box-dind-run-$ws:/run/dind" \
+      -v "$WS_ROOT/$ws:/workspace/$ws" "${cfg_ro[@]+"${cfg_ro[@]}"}" \
+      "$DIND_IMAGE" dockerd --host=unix:///run/dind/docker.sock --group=1000 >/dev/null || return 0
+    started=1
+    for _ in $(seq 1 60); do
+      docker exec "$d" docker -H unix:///run/dind/docker.sock info >/dev/null 2>&1 && break
+      sleep 0.5
+    done
+  fi
+  if out="$(docker exec "$d" docker -H unix:///run/dind/docker.sock system prune -af 2>&1)"; then
+    echo "  $ws's Docker daemon: $(echo "$out" | reclaimed) freed"
+  else
+    echo "  $ws's Docker daemon: prune failed: $(echo "$out" | tail -1)" >&2
+  fi
+  if [[ $started -eq 1 && -z "$(docker ps -q --filter "label=claude-box.uses-dind=$d")" ]]; then
+    docker rm -f "$d" >/dev/null 2>&1 || true
+  fi
+}
+clean_go() {   # $1 profile
+  local v="claude-box-home-$1" img="$BASE_IMAGE" kb
+  if [[ -n "$(docker ps -q --filter "volume=$v")" ]]; then
+    echo "  profile $1, Go caches: skipped, a box using the profile runs (stop it, then clean again)"; return 0
+  fi
+  docker image inspect "$img" >/dev/null 2>&1 || img="alpine:3.20"
+  # Go makes the module cache read-only, hence the chmod.
+  kb="$(docker run --rm --user 0 --entrypoint sh -v "$v:/h" "$img" -c '
+    du -skc /h/.cache/go-build /h/go/pkg/mod 2>/dev/null | tail -1 | cut -f1
+    chmod -R u+w /h/go/pkg/mod 2>/dev/null; rm -rf /h/.cache/go-build /h/go/pkg/mod' 2>/dev/null)" || kb=0
+  echo "  profile $1, Go caches: $(awk -v k="${kb:-0}" 'BEGIN { printf "%.1fGB", k / 1048576 }') freed"
+}
+cmd_clean() {
+  local ws="" go=0 a spaces="" profiles p
+  for a in "$@"; do
+    case "$a" in
+      --go) go=1 ;;
+      -*) cmd_usage clean >&2; exit 2 ;;
+      *) [[ -z "$ws" ]] || { cmd_usage clean >&2; exit 2; }; ws="$a" ;;
+    esac
+  done
+  if [[ -n "$ws" ]]; then
+    need_ws "$ws"; [[ -d "$WS_ROOT/$ws" ]] || { echo "no workspace $ws in $WS_ROOT" >&2; exit 2; }
+    docker volume inspect "claude-box-dind-$ws" >/dev/null 2>&1 && spaces="$ws"
+    p="$(cfg_value "$ws" profile)"; profiles="${p:-private}"
+  else
+    spaces="$(docker volume ls -q --filter name=claude-box-dind- | sed -n 's/^claude-box-dind-//p' | grep -v '^run-' || true)"
+    profiles="$(docker volume ls -q --filter name=claude-box-home- | sed -n 's/^claude-box-home-//p')"
+  fi
+  echo "Freeing disk space${ws:+ for $ws} (only what is built or pulled again when needed):"
+  for a in $spaces; do clean_dind "$a"; done
+  echo "  old claude-box images: $(docker image prune -f --filter "label=$IMAGE_LABEL" 2>/dev/null | reclaimed) freed"
+  echo "  Docker build cache: $(docker builder prune -f 2>/dev/null | reclaimed) freed"
+  if [[ $go -eq 1 ]]; then
+    for p in $profiles; do clean_go "$p"; done
+  else
+    echo "Go's caches in the profile homes can take GBs too: claude-box clean${ws:+ $ws} --go"
+  fi
+  echo "Docker Desktop gives the space back to the Mac by itself, within a few minutes."
 }
 
 # --- list -----------------------------------------------------------------------------------------

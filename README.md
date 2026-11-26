@@ -48,7 +48,8 @@ claude-box set <name> git-email jane@acme.com   # git identity (also: git-name "
 claude-box set <name> signing on       # signed commits: makes an SSH signing key, shows where to add it
 claude-box set <name> docker on        # profile | connectors | docker | gcloud | sync | skills | color | env
 claude-box gcloud-login <name>         # with gcloud on: log gcloud in for this workspace only
-claude-box doctor <name>               # checks remotes, secrets (against GitHub/GitLab/Jira), image
+claude-box doctor <name>               # checks remotes, secrets (against GitHub/GitLab/Jira), image,
+                                       # disk use
 claude-box list                        # all workspaces
 claude-box profiles                    # profiles and the Claude account in each
 ```
@@ -259,6 +260,10 @@ abuses it could reach the VM, and the VM can see the folders Docker Desktop shar
 To shrink that, limit Docker Desktop → Settings → Resources → File sharing to `~/claude-box`
 (this also affects other bind mounts you use on the Mac). Only turn it on where you need it.
 
+Its images, containers and build cache stay in a volume per workspace (`claude-box-dind-<ws>`)
+and only grow; an agent that builds or pulls a lot can fill tens of GBs. `claude-box doctor <ws>`
+shows the size, `claude-box clean <ws>` frees it (see [Disk space](#disk-space)).
+
 ## Google Cloud (opt-in)
 
 `claude-box set <workspace> gcloud on` adds the Google Cloud CLI and the GKE auth plugin to the
@@ -314,6 +319,34 @@ A Mac port that is already in use stops the start with a message: pick another M
 there. With `docker on`, the ports are opened on the workspace's Docker daemon, whose network the
 box shares (so ports published by `docker run -p`/compose in the box can be forwarded too). They
 are fixed while it runs: a second box of the same workspace must use the same `--port`, or none.
+
+## Disk space
+
+Docker Desktop keeps everything in one disk file on your Mac that grows and doesn't shrink by
+itself. What claude-box adds to it:
+
+- each workspace's private Docker daemon (`docker on`): every image and container the agent
+  built or pulled there
+- the profile homes: tool caches, often GBs of Go's build and module cache
+- the build cache of project images
+
+A rebuild of a project or gcloud image removes the image it replaces, so old ones don't pile up.
+`claude-box doctor <workspace>` shows the size of its Docker daemon and profile home and warns
+from 10 GB. To free space:
+
+```sh
+claude-box clean                # every workspace's Docker daemon, old claude-box images, build cache
+claude-box clean myproject      # only that workspace's Docker daemon (plus the images and cache)
+claude-box clean --go           # also Go's caches in the profile homes
+```
+
+It removes only what is built or pulled again when needed: in each workspace's daemon
+`docker system prune -a` (stopped containers, images no running container uses, its build cache;
+its volumes, such as database data, stay), claude-box images a newer build replaced, and Docker's
+build cache (all of it; Docker doesn't record which tool a cache entry is from). A daemon that
+isn't running is started just for this. With `--go` it also clears `~/.cache/go-build` and
+`~/go/pkg/mod` in the profile homes, except in a profile one of whose boxes runs. Docker Desktop
+gives the space back to the Mac within a few minutes.
 
 ## Troubleshooting
 
